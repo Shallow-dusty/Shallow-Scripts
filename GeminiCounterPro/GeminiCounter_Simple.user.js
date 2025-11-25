@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Pro (Sync & Movable)
+// @name         Gemini Counter Simple (Legacy Sync)
 // @namespace    http://tampermonkey.net/
-// @version      6.0
-// @description  精准计数 + 多窗口实时同步 + 磨砂玻璃UI + 可拖拽
+// @version      6.0.1
+// @description  简约同步版 (Legacy)：精准计数 + 多窗口实时同步 + 磨砂玻璃UI + 可拖拽
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -14,6 +14,10 @@
 
 /*
  * 📜 版本历史 (Version History)
+ *
+ * v6.0.1: Archived as "Simple" (归档为简约版)
+ * - 本版本已归档为 Gemini Counter Simple。
+ * - 保留了 v2.x 的同步核心与 v5.x 的 UI，作为轻量级替代方案。
  *
  * v6.0: The Sync Update (最终同步版)
  * - 核心: 引入 GM_addValueChangeListener 和原子化读写，解决多窗口竞态条件。
