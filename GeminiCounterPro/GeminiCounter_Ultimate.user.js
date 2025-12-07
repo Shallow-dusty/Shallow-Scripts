@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v5.4 Adaptive)
+// @name         Gemini Counter Ultimate (v5.5)
 // @namespace    http://tampermonkey.net/
-// @version      5.4
-// @description  终极版：自适应屏幕分辨率(防止多屏切换消失) + 多窗口同步 + 激进持久化
+// @version      5.5
+// @description  终极版：每日配额追踪(可调重置时间) + 累计对话数 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Counter Ultimate v5.4 Starting...");
+    console.log("💎 Gemini Counter Ultimate v5.5 Starting...");
 
     // --- 🎨 主题配置 ---
     const THEMES = {
@@ -69,9 +69,10 @@
     const GLOBAL_KEYS = {
         POS: 'gemini_panel_pos',
         REGISTRY: 'gemini_user_registry',
-        THEME: 'gemini_current_theme'
+        THEME: 'gemini_current_theme',
+        RESET_HOUR: 'gemini_reset_hour'
     };
-    const PANEL_ID = 'gemini-monitor-panel-v17';
+    const PANEL_ID = 'gemini-monitor-panel-v55';
     const COOLDOWN = 1000;
     const DEFAULT_POS = { top: 'auto', left: 'auto', bottom: '85px', right: '30px' };
     const TEMP_USER = "Guest";
@@ -80,17 +81,47 @@
     let currentUser = TEMP_USER;
     let inspectingUser = TEMP_USER;
     let currentTheme = GM_getValue(GLOBAL_KEYS.THEME, 'glass');
+    let resetHour = GM_getValue(GLOBAL_KEYS.RESET_HOUR, 0); // 默认凌晨0点重置
     let storageListenerId = null;
 
     let state = {
-        session: 0,
-        total: 0,
-        chats: {},
-        viewMode: 'session',
+        total: 0,                  // 历史总消息数
+        totalChatsCreated: 0,      // 累计创建对话数
+        chats: {},                 // 每个对话的消息数 { chatId: count }
+        dailyCounts: {},           // 每日统计 { "YYYY-MM-DD": { messages: N, chats: N } }
+        viewMode: 'today',         // 默认显示今日 (替代原 session)
         isExpanded: false,
         resetStep: 0
     };
     let lastCountTime = 0;
+
+    // --- 🕐 每日计算辅助 ---
+    function getDayKey(resetHour = 0) {
+        const now = new Date();
+        // 如果当前小时 < resetHour，则算作"昨天"
+        if (now.getHours() < resetHour) {
+            now.setDate(now.getDate() - 1);
+        }
+        return now.toISOString().slice(0, 10); // "YYYY-MM-DD"
+    }
+
+    function ensureTodayEntry() {
+        const today = getDayKey(resetHour);
+        if (!state.dailyCounts[today]) {
+            state.dailyCounts[today] = { messages: 0, chats: 0 };
+        }
+        return today;
+    }
+
+    function getTodayMessages() {
+        const today = getDayKey(resetHour);
+        return state.dailyCounts[today]?.messages || 0;
+    }
+
+    function getTodayChats() {
+        const today = getDayKey(resetHour);
+        return state.dailyCounts[today]?.chats || 0;
+    }
 
     // --- 🛠️ 核心功能 ---
     function registerUser(userId) {
@@ -126,10 +157,9 @@
         storageListenerId = GM_addValueChangeListener(storageKey, (name, oldVal, newVal, remote) => {
             if (remote && newVal) {
                 state.total = newVal.total || 0;
+                state.totalChatsCreated = newVal.totalChatsCreated || 0;
                 state.chats = newVal.chats || {};
-                if (targetUser === currentUser) {
-                    state.session = newVal.session || 0;
-                }
+                state.dailyCounts = newVal.dailyCounts || {};
                 updateUI();
                 if (state.isExpanded) renderDetailsPane();
             }
@@ -142,7 +172,7 @@
         setupStorageListener(targetUser);
 
         if (targetUser === TEMP_USER) {
-            state.total = 0; state.chats = {}; state.session = 0;
+            state.total = 0; state.totalChatsCreated = 0; state.chats = {}; state.dailyCounts = {};
             return;
         }
 
@@ -150,12 +180,16 @@
         const savedData = GM_getValue(storageKey, null);
         if (savedData) {
             state.total = savedData.total || 0;
+            state.totalChatsCreated = savedData.totalChatsCreated || 0;
             state.chats = savedData.chats || {};
-            if (targetUser === currentUser) {
-                state.session = savedData.session || 0;
+            state.dailyCounts = savedData.dailyCounts || {};
+            // 兼容旧版数据: 如果有 session 但没有 dailyCounts，迁移
+            if (savedData.session && Object.keys(state.dailyCounts).length === 0) {
+                const today = getDayKey(resetHour);
+                state.dailyCounts[today] = { messages: savedData.session, chats: 0 };
             }
         } else {
-            state.total = 0; state.chats = {}; state.session = 0;
+            state.total = 0; state.totalChatsCreated = 0; state.chats = {}; state.dailyCounts = {};
         }
         updateUI();
     }
@@ -163,7 +197,12 @@
     function saveCurrentUserData() {
         if (!currentUser || !currentUser.includes('@')) return;
         const storageKey = `gemini_store_${currentUser}`;
-        GM_setValue(storageKey, { total: state.total, chats: state.chats, session: state.session });
+        GM_setValue(storageKey, {
+            total: state.total,
+            totalChatsCreated: state.totalChatsCreated,
+            chats: state.chats,
+            dailyCounts: state.dailyCounts
+        });
     }
 
     function getChatId() {
@@ -277,12 +316,12 @@
             const subInfo = document.createElement('div');
             subInfo.id = 'g-sub-info';
             subInfo.className = 'gemini-sub-info';
-            subInfo.textContent = 'ID: New Chat';
+            subInfo.textContent = 'Today';
 
             const actionBtn = document.createElement('button');
             actionBtn.id = 'g-action-btn';
             actionBtn.className = 'g-btn';
-            actionBtn.textContent = 'Reset';
+            actionBtn.textContent = 'Reset Today';
             actionBtn.onclick = handleReset;
             actionBtn.onmousedown = (e) => e.stopPropagation();
 
@@ -314,9 +353,10 @@
         // Stats
         pane.appendChild(createSectionTitle('Statistics'));
         const cid = getChatId();
-        pane.appendChild(createRow('Session', 'session', state.session));
+        pane.appendChild(createRow('Today', 'today', getTodayMessages()));
         pane.appendChild(createRow('Current Chat', 'chat', cid ? (state.chats[cid] || 0) : 0));
-        pane.appendChild(createRow('Total History', 'total', state.total));
+        pane.appendChild(createRow('Chats Created', 'chatsCreated', state.totalChatsCreated));
+        pane.appendChild(createRow('Lifetime', 'total', state.total));
 
         // Profiles
         pane.appendChild(createSectionTitle('Profiles'));
@@ -426,9 +466,11 @@
         let val = 0, sub = "", btn = "Reset";
         let disableBtn = !isMe;
 
-        if (state.viewMode === 'session') {
-            val = state.session; sub = "Session (Local)"; btn = "Reset Session";
-            if (!isMe) { val = "--"; sub = "Offline"; disableBtn = true; }
+        if (state.viewMode === 'today') {
+            val = getTodayMessages();
+            sub = `Today (Reset @${resetHour}:00)`;
+            btn = "Reset Today";
+            if (!isMe) { val = getTodayMessages(); sub = `Today (${inspectingUser.split('@')[0]})`; }
         } else if (state.viewMode === 'chat') {
             if (!isMe) {
                 val = "--"; sub = "Different Context"; disableBtn = true;
@@ -438,6 +480,11 @@
                 sub = cid ? `ID: ${cid.slice(0, 8)}...` : 'ID: New Chat';
                 btn = "Reset Chat";
             }
+        } else if (state.viewMode === 'chatsCreated') {
+            val = state.totalChatsCreated;
+            sub = "Chats Created";
+            btn = "View Only";
+            disableBtn = true; // 历史累计，不可重置
         } else if (state.viewMode === 'total') {
             val = state.total; sub = "Lifetime History"; btn = "Clear History";
         }
@@ -463,17 +510,22 @@
 
     function handleReset() {
         if (inspectingUser !== currentUser) return;
-        if (state.viewMode === 'session') { state.session = 0; state.resetStep = 0; }
-        else if (state.viewMode === 'chat') {
+        if (state.viewMode === 'today') {
+            const today = getDayKey(resetHour);
+            if (state.dailyCounts[today]) {
+                state.dailyCounts[today].messages = 0;
+            }
+            state.resetStep = 0;
+        } else if (state.viewMode === 'chat') {
             if (state.resetStep === 0) { state.resetStep = 1; updateUI(); return; }
             const cid = getChatId();
             if (cid) state.chats[cid] = 0;
             state.resetStep = 0;
-        }
-        else if (state.viewMode === 'total') {
+        } else if (state.viewMode === 'total') {
             if (state.resetStep === 0) { state.resetStep = 1; updateUI(); return; }
             if (state.resetStep === 1) { state.resetStep = 2; updateUI(); return; }
-            state.total = 0; state.chats = {}; state.resetStep = 0;
+            state.total = 0; state.chats = {}; state.dailyCounts = {}; state.totalChatsCreated = 0;
+            state.resetStep = 0;
         }
         saveCurrentUserData();
         updateUI();
@@ -484,21 +536,28 @@
         const now = Date.now();
         if (now - lastCountTime < COOLDOWN) return;
 
-        state.session++;
+        const today = ensureTodayEntry();
+
+        // 增加消息计数
         state.total++;
+        state.dailyCounts[today].messages++;
         lastCountTime = now;
 
-        saveCurrentUserData();
-
-        const viewing = inspectingUser;
         const cid = getChatId();
         
         if (cid) {
+            // 检测是否为新对话
+            if (!state.chats[cid]) {
+                state.totalChatsCreated++;
+                state.dailyCounts[today].chats++;
+            }
             state.chats[cid] = (state.chats[cid] || 0) + 1;
             saveCurrentUserData();
             updateUI();
             if (state.isExpanded) renderDetailsPane();
         } else {
+            // 新对话，开启轮询
+            saveCurrentUserData();
             updateUI();
             let attempts = 0;
             const maxAttempts = 20;
@@ -507,6 +566,12 @@
                 const newCid = getChatId();
                 if (newCid && currentUser !== TEMP_USER) {
                     clearInterval(poller);
+                    // 检测是否为新对话
+                    if (!state.chats[newCid]) {
+                        state.totalChatsCreated++;
+                        const todayKey = ensureTodayEntry();
+                        state.dailyCounts[todayKey].chats++;
+                    }
                     state.chats[newCid] = (state.chats[newCid] || 0) + 1;
                     saveCurrentUserData();
                     if (inspectingUser === currentUser) {
@@ -544,14 +609,13 @@
         if (!document.getElementById(PANEL_ID)) createPanel();
     }
 
-    // 🔥 修复点：Adaptive Viewport Check
+    // 🔥 Adaptive Viewport Check
     function applyPos(el, pos) {
         const winW = window.innerWidth;
         const winH = window.innerHeight;
         const savedLeft = parseFloat(pos.left);
         const savedTop = parseFloat(pos.top);
 
-        // 如果坐标在屏幕外，强制复位
         if ((savedLeft && savedLeft > winW - 50) || (savedTop && savedTop > winH - 50)) {
             console.warn("💎 Panel off-screen detected. Resetting.");
             el.style.top = 'auto';
@@ -611,6 +675,22 @@
             GM_setValue(GLOBAL_KEYS.POS, { top: el.style.top, left: el.style.left, bottom: 'auto', right: 'auto' });
         });
     }
+
+    // 油猴菜单命令
     GM_registerMenuCommand("🔄 Reset Position", () => { GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS); location.reload(); });
+    GM_registerMenuCommand("⏰ Set Reset Hour", () => {
+        const input = prompt(`Set daily reset hour (0-23).\nCurrent: ${resetHour}:00\n\nExample:\n0 = Midnight\n6 = 6 AM\n14 = 2 PM`, resetHour);
+        if (input !== null) {
+            const hour = parseInt(input, 10);
+            if (!isNaN(hour) && hour >= 0 && hour <= 23) {
+                resetHour = hour;
+                GM_setValue(GLOBAL_KEYS.RESET_HOUR, hour);
+                updateUI();
+                alert(`Reset hour set to ${hour}:00`);
+            } else {
+                alert("Invalid hour. Please enter a number between 0 and 23.");
+            }
+        }
+    });
 
 })();
