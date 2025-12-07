@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v5.5)
+// @name         Gemini Counter Ultimate (v5.6)
 // @namespace    http://tampermonkey.net/
-// @version      5.5
-// @description  终极版：每日配额追踪(可调重置时间) + 累计对话数 + 多窗口同步 + 主题系统
+// @version      5.6
+// @description  终极版：设置面板 + 每日配额 + 累计对话数 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Counter Ultimate v5.5 Starting...");
+    console.log("💎 Gemini Counter Ultimate v5.6 Starting...");
 
     // --- 🎨 主题配置 ---
     const THEMES = {
@@ -280,6 +280,47 @@
             .g-btn.danger-1 { color: #f28b82; border-color: #f28b82; }
             .g-btn.danger-2 { background: #f28b82; color: #202124; font-weight: bold; }
             .g-btn.disabled { opacity: 0.5; cursor: not-allowed; }
+
+            /* Settings Modal */
+            .settings-overlay {
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                background: rgba(0,0,0,0.6); z-index: 2147483646;
+                display: flex; align-items: center; justify-content: center;
+            }
+            .settings-modal {
+                width: 280px; max-height: 80vh; overflow-y: auto;
+                background: var(--bg, #202124); border: 1px solid var(--border, rgba(255,255,255,0.1));
+                border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
+                font-family: 'Google Sans', Roboto, sans-serif;
+            }
+            .settings-header {
+                padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.1);
+                display: flex; justify-content: space-between; align-items: center;
+            }
+            .settings-header h3 { margin: 0; font-size: 14px; color: var(--text-main, #fff); font-weight: 500; }
+            .settings-close { cursor: pointer; font-size: 18px; color: var(--text-sub, #9aa0a6); }
+            .settings-close:hover { color: var(--accent, #8ab4f8); }
+            .settings-body { padding: 12px 16px; }
+            .settings-section { margin-bottom: 16px; }
+            .settings-section-title { font-size: 10px; color: var(--text-sub, #9aa0a6); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
+            .settings-row {
+                display: flex; justify-content: space-between; align-items: center;
+                padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+            }
+            .settings-row:last-child { border-bottom: none; }
+            .settings-label { font-size: 12px; color: var(--text-main, #fff); }
+            .settings-select {
+                background: var(--btn-bg, rgba(255,255,255,0.05)); border: 1px solid var(--border, rgba(255,255,255,0.1));
+                color: var(--text-main, #fff); border-radius: 6px; padding: 4px 8px; font-size: 11px;
+            }
+            .settings-btn {
+                background: var(--btn-bg, rgba(255,255,255,0.05)); border: 1px solid transparent;
+                color: var(--text-sub, #9aa0a6); border-radius: 6px; padding: 8px 12px; font-size: 11px;
+                cursor: pointer; transition: all 0.2s; width: 100%; margin-top: 4px;
+            }
+            .settings-btn:hover { background: var(--row-hover, rgba(255,255,255,0.05)); color: var(--text-main, #fff); }
+            .settings-btn.danger { color: #f28b82; border-color: #f28b82; }
+            .settings-version { font-size: 10px; color: var(--text-sub, #9aa0a6); text-align: center; padding: 8px; opacity: 0.6; }
         `);
     }
 
@@ -408,6 +449,15 @@
             };
             pane.appendChild(row);
         });
+
+        // Settings Button
+        pane.appendChild(createSectionTitle(''));
+        const settingsBtn = document.createElement('button');
+        settingsBtn.className = 'g-btn';
+        settingsBtn.textContent = '⚙️ Settings';
+        settingsBtn.onclick = (e) => { e.stopPropagation(); openSettingsModal(); };
+        settingsBtn.onmousedown = (e) => e.stopPropagation();
+        pane.appendChild(settingsBtn);
     }
 
     function createSectionTitle(text) {
@@ -674,6 +724,116 @@
             isDragging = false; handle.style.cursor = 'grab';
             GM_setValue(GLOBAL_KEYS.POS, { top: el.style.top, left: el.style.left, bottom: 'auto', right: 'auto' });
         });
+    }
+
+    // --- ⚙️ Settings Modal ---
+    const SETTINGS_MODAL_ID = 'gemini-settings-modal';
+
+    function openSettingsModal() {
+        if (document.getElementById(SETTINGS_MODAL_ID)) return; // Already open
+
+        const overlay = document.createElement('div');
+        overlay.id = SETTINGS_MODAL_ID;
+        overlay.className = 'settings-overlay';
+        overlay.onclick = (e) => { if (e.target === overlay) closeSettingsModal(); };
+
+        const modal = document.createElement('div');
+        modal.className = 'settings-modal';
+        applyTheme(modal, currentTheme);
+
+        // Header
+        const header = document.createElement('div');
+        header.className = 'settings-header';
+        const title = document.createElement('h3');
+        title.textContent = '⚙️ Settings';
+        const closeBtn = document.createElement('span');
+        closeBtn.className = 'settings-close';
+        closeBtn.textContent = '✕';
+        closeBtn.onclick = closeSettingsModal;
+        header.appendChild(title);
+        header.appendChild(closeBtn);
+
+        // Body
+        const body = document.createElement('div');
+        body.className = 'settings-body';
+
+        // Section: Daily Reset
+        const resetSection = document.createElement('div');
+        resetSection.className = 'settings-section';
+        const resetTitle = document.createElement('div');
+        resetTitle.className = 'settings-section-title';
+        resetTitle.textContent = 'Daily Reset';
+        resetSection.appendChild(resetTitle);
+
+        const resetRow = document.createElement('div');
+        resetRow.className = 'settings-row';
+        const resetLabel = document.createElement('span');
+        resetLabel.className = 'settings-label';
+        resetLabel.textContent = 'Reset Hour';
+        const resetSelect = document.createElement('select');
+        resetSelect.className = 'settings-select';
+        for (let h = 0; h < 24; h++) {
+            const opt = document.createElement('option');
+            opt.value = h;
+            opt.textContent = `${h.toString().padStart(2, '0')}:00`;
+            if (h === resetHour) opt.selected = true;
+            resetSelect.appendChild(opt);
+        }
+        resetSelect.onchange = () => {
+            resetHour = parseInt(resetSelect.value, 10);
+            GM_setValue(GLOBAL_KEYS.RESET_HOUR, resetHour);
+            updateUI();
+        };
+        resetRow.appendChild(resetLabel);
+        resetRow.appendChild(resetSelect);
+        resetSection.appendChild(resetRow);
+        body.appendChild(resetSection);
+
+        // Section: Data
+        const dataSection = document.createElement('div');
+        dataSection.className = 'settings-section';
+        const dataTitle = document.createElement('div');
+        dataTitle.className = 'settings-section-title';
+        dataTitle.textContent = 'Data';
+        dataSection.appendChild(dataTitle);
+
+        const exportBtn = document.createElement('button');
+        exportBtn.className = 'settings-btn';
+        exportBtn.textContent = '📤 Export Data (JSON)';
+        exportBtn.onclick = () => {
+            const data = {
+                total: state.total,
+                totalChatsCreated: state.totalChatsCreated,
+                chats: state.chats,
+                dailyCounts: state.dailyCounts,
+                exportedAt: new Date().toISOString()
+            };
+            const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = `gemini-counter-${currentUser.split('@')[0]}-${new Date().toISOString().slice(0,10)}.json`;
+            a.click();
+            URL.revokeObjectURL(url);
+        };
+        dataSection.appendChild(exportBtn);
+        body.appendChild(dataSection);
+
+        // Version
+        const version = document.createElement('div');
+        version.className = 'settings-version';
+        version.textContent = 'Gemini Counter Ultimate v5.6';
+        body.appendChild(version);
+
+        modal.appendChild(header);
+        modal.appendChild(body);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+    }
+
+    function closeSettingsModal() {
+        const modal = document.getElementById(SETTINGS_MODAL_ID);
+        if (modal) modal.remove();
     }
 
     // 油猴菜单命令
