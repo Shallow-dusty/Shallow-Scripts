@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v5.4 Adaptive)
+// @name         Gemini Counter Ultimate (v5.3)
 // @namespace    http://tampermonkey.net/
-// @version      5.4
-// @description  终极版：自适应屏幕分辨率(防止多屏切换消失) + 多窗口同步 + 激进持久化
+// @version      5.3
+// @description  彻底修复TrustedHTML报错(使用replaceChildren) + 新对话即时响应逻辑 + 完整仪表盘功能
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Counter Ultimate v5.4 Starting...");
+    console.log("💎 Gemini Counter Pro V17 Starting...");
 
     // --- 🎨 主题配置 ---
     const THEMES = {
@@ -74,13 +74,13 @@
     const PANEL_ID = 'gemini-monitor-panel-v17';
     const COOLDOWN = 1000;
     const DEFAULT_POS = { top: 'auto', left: 'auto', bottom: '85px', right: '30px' };
-    const TEMP_USER = "Guest";
+    const TEMP_USER = "Guest"; // 默认显示，直到识别成功
 
     // --- 📊 状态 ---
     let currentUser = TEMP_USER;
     let inspectingUser = TEMP_USER;
     let currentTheme = GM_getValue(GLOBAL_KEYS.THEME, 'glass');
-    let storageListenerId = null;
+    let storageListenerId = null; // 监听器 ID
 
     let state = {
         session: 0,
@@ -105,6 +105,7 @@
 
     function detectUser() {
         try {
+            // 优先找带@的aria-label
             const candidates = document.querySelectorAll('a[aria-label*="@"], button[aria-label*="@"], div[aria-label*="帐号"], div[aria-label*="Account"]');
             for (let el of candidates) {
                 const label = el.getAttribute('aria-label') || "";
@@ -116,17 +117,24 @@
     }
 
     function setupStorageListener(targetUser) {
+        // 1. 清理旧监听器
         if (storageListenerId) {
             GM_removeValueChangeListener(storageListenerId);
             storageListenerId = null;
         }
+
+        // Guest 不监听
         if (!targetUser || targetUser === TEMP_USER) return;
 
+        // 2. 注册新监听器
         const storageKey = `gemini_store_${targetUser}`;
         storageListenerId = GM_addValueChangeListener(storageKey, (name, oldVal, newVal, remote) => {
             if (remote && newVal) {
+                // 仅当变化来自其他标签页时，更新本地状态
                 state.total = newVal.total || 0;
                 state.chats = newVal.chats || {};
+                // 如果正在查看当前用户，Session 也同步（虽然 Session 是本地概念，但为了多窗口一致性，这里选择同步）
+                // 注意：如果希望 Session 严格本地隔离，可以把这行去掉。但为了"Sync"体验，通常是同步的。
                 if (targetUser === currentUser) {
                     state.session = newVal.session || 0;
                 }
@@ -139,8 +147,11 @@
     function loadDataForView(targetUser) {
         if (!targetUser) return;
         inspectingUser = targetUser;
+
+        // 重新挂载监听器
         setupStorageListener(targetUser);
 
+        // 如果是 Guest，不读库，直接全0
         if (targetUser === TEMP_USER) {
             state.total = 0; state.chats = {}; state.session = 0;
             return;
@@ -151,6 +162,7 @@
         if (savedData) {
             state.total = savedData.total || 0;
             state.chats = savedData.chats || {};
+            // 恢复 session 数据 (如果存在且是当前用户)
             if (targetUser === currentUser) {
                 state.session = savedData.session || 0;
             }
@@ -163,13 +175,14 @@
     function saveCurrentUserData() {
         if (!currentUser || !currentUser.includes('@')) return;
         const storageKey = `gemini_store_${currentUser}`;
+        // 保存 session 数据
         GM_setValue(storageKey, { total: state.total, chats: state.chats, session: state.session });
     }
 
     function getChatId() {
         try {
             const match = window.location.pathname.match(/\/app\/([a-zA-Z0-9\-_]+)/);
-            return match ? match[1] : null;
+            return match ? match[1] : null; // null 代表 New Chat
         } catch (e) { return null; }
     }
 
@@ -244,7 +257,7 @@
         `);
     }
 
-    // --- 🏗️ UI 构建 ---
+    // --- 🏗️ UI 构建 (V17 严格 DOM 模式) ---
     function createPanel() {
         try {
             const container = document.createElement('div');
@@ -300,8 +313,8 @@
             document.body.appendChild(container);
 
             makeDraggable(container, header);
-            renderDetailsPane(); 
-            updateUI(); 
+            renderDetailsPane(); // 预渲染
+            updateUI();
 
         } catch (e) { console.error("Init error", e); }
     }
@@ -309,21 +322,24 @@
     function renderDetailsPane() {
         const pane = document.getElementById('g-details-pane');
         if (!pane) return;
+
+        // 🔥 关键修复：使用 replaceChildren 清空，严禁 innerHTML = ''
         pane.replaceChildren();
 
-        // Stats
+        // 1. Stats
         pane.appendChild(createSectionTitle('Statistics'));
         const cid = getChatId();
         pane.appendChild(createRow('Session', 'session', state.session));
         pane.appendChild(createRow('Current Chat', 'chat', cid ? (state.chats[cid] || 0) : 0));
         pane.appendChild(createRow('Total History', 'total', state.total));
 
-        // Profiles
+        // 2. Profiles
         pane.appendChild(createSectionTitle('Profiles'));
         const users = getAllUsers();
         const sortedUsers = users.sort((a, b) => (a === currentUser ? -1 : b === currentUser ? 1 : a.localeCompare(b)));
 
         if (sortedUsers.length === 0 && currentUser === TEMP_USER) {
+            // 如果还没识别出用户，显示一个占位
             const row = document.createElement('div');
             row.className = 'detail-row';
             row.textContent = 'Waiting for login...';
@@ -337,7 +353,7 @@
                     inspectingUser = uid;
                     loadDataForView(uid);
                     state.viewMode = 'total';
-                    renderDetailsPane();
+                    renderDetailsPane(); // 重绘高亮
                 };
                 const nameSpan = document.createElement('span');
                 nameSpan.textContent = uid.split('@')[0];
@@ -352,7 +368,7 @@
             });
         }
 
-        // Themes
+        // 3. Themes
         pane.appendChild(createSectionTitle('Themes'));
         Object.keys(THEMES).forEach(key => {
             const row = document.createElement('div');
@@ -407,7 +423,7 @@
         const isMe = inspectingUser === currentUser;
         const displayName = inspectingUser === TEMP_USER ? 'Guest' : inspectingUser.split('@')[0];
 
-        capsule.replaceChildren(); 
+        capsule.replaceChildren(); // Safe clear
         const dot = document.createElement('div');
         dot.className = 'user-avatar-dot';
         const name = document.createElement('span');
@@ -434,6 +450,7 @@
                 val = "--"; sub = "Different Context"; disableBtn = true;
             } else {
                 const cid = getChatId();
+                // 如果是 null (New Chat)，显示0
                 val = cid ? (state.chats[cid] || 0) : 0;
                 sub = cid ? `ID: ${cid.slice(0, 8)}...` : 'ID: New Chat';
                 btn = "Reset Chat";
@@ -480,42 +497,64 @@
         renderDetailsPane();
     }
 
+    // 🌟 核心逻辑：即时响应 + 延迟归档
     function attemptIncrement() {
         const now = Date.now();
         if (now - lastCountTime < COOLDOWN) return;
 
+        // 1. 无论是否有ID，立即增加 Session 和 Total
         state.session++;
         state.total++;
         lastCountTime = now;
 
-        saveCurrentUserData();
-
+        // 暂存状态用于恢复UI
         const viewing = inspectingUser;
+
+        // 2. 检查是否有 ID
         const cid = getChatId();
-        
         if (cid) {
-            state.chats[cid] = (state.chats[cid] || 0) + 1;
-            saveCurrentUserData();
+            // 有 ID (旧对话)，直接记录
+            if (currentUser !== TEMP_USER) {
+                state.chats[cid] = (state.chats[cid] || 0) + 1;
+                saveCurrentUserData();
+            }
+            // 更新 UI
             updateUI();
+            // 如果面板展开，刷新列表数值
             if (state.isExpanded) renderDetailsPane();
         } else {
+            // 无 ID (新对话)，开启轮询检测 URL 变化
+            // UI 已经立即更新了 Session/Total，用户体验是实时的
             updateUI();
+
             let attempts = 0;
-            const maxAttempts = 20;
+            const maxAttempts = 20; // 10秒超时 (20 * 500ms)
             const poller = setInterval(() => {
                 attempts++;
                 const newCid = getChatId();
+
                 if (newCid && currentUser !== TEMP_USER) {
+                    // 🎉 终于抓到了新 ID！
                     clearInterval(poller);
+
+                    // 把这条消息归档到新 ID
                     state.chats[newCid] = (state.chats[newCid] || 0) + 1;
+
+                    // 保存所有状态 (Chats + Session + Total)
                     saveCurrentUserData();
+                    console.log(`✅ New Chat ID detected after ${attempts * 0.5}s:`, newCid);
+
+                    // 刷新 UI (如果当前还在看这个用户)
                     if (inspectingUser === currentUser) {
                         updateUI();
                         if (state.isExpanded) renderDetailsPane();
                     }
                 } else if (attempts >= maxAttempts) {
+                    // ⏰ 超时了，还是没变 URL
                     clearInterval(poller);
+                    // 至少保存一下 Session/Total 的增量
                     saveCurrentUserData();
+                    console.warn("⚠️ New Chat ID detection timed out. Count saved to Session/Total only.");
                 }
             }, 500);
         }
@@ -533,42 +572,22 @@
 
     function checkUserAndPanel() {
         const detected = detectUser();
+        // 如果识别到了新用户
         if (detected && detected !== currentUser) {
             currentUser = detected;
             registerUser(detected);
+            // 如果之前是 Guest 或正在看自己，则切换视察对象
             if (inspectingUser === TEMP_USER || inspectingUser === currentUser) {
                 inspectingUser = currentUser;
             }
             loadDataForView(inspectingUser);
         }
+        // 确保面板存在
         if (!document.getElementById(PANEL_ID)) createPanel();
     }
 
-    // 🔥 修复点：Adaptive Viewport Check
-    function applyPos(el, pos) {
-        const winW = window.innerWidth;
-        const winH = window.innerHeight;
-        const savedLeft = parseFloat(pos.left);
-        const savedTop = parseFloat(pos.top);
-
-        // 如果坐标在屏幕外，强制复位
-        if ((savedLeft && savedLeft > winW - 50) || (savedTop && savedTop > winH - 50)) {
-            console.warn("💎 Panel off-screen detected. Resetting.");
-            el.style.top = 'auto';
-            el.style.left = 'auto';
-            el.style.bottom = DEFAULT_POS.bottom;
-            el.style.right = DEFAULT_POS.right;
-            GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
-        } else {
-            if (pos.top !== 'auto') el.style.top = pos.top;
-            if (pos.left !== 'auto') el.style.left = pos.left;
-            if (pos.bottom !== 'auto') el.style.bottom = pos.bottom;
-            if (pos.right !== 'auto') el.style.right = pos.right;
-        }
-    }
-
     injectStyles();
-    setInterval(checkUserAndPanel, 1500);
+    setInterval(checkUserAndPanel, 1500); // 降低检测频率，不影响交互
 
     document.addEventListener('keydown', (e) => {
         if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.originalEvent?.isComposing) return;
@@ -586,6 +605,12 @@
         }
     }, true);
 
+    function applyPos(el, pos) {
+        if (pos.top !== 'auto') el.style.top = pos.top;
+        if (pos.left !== 'auto') el.style.left = pos.left;
+        if (pos.bottom !== 'auto') el.style.bottom = pos.bottom;
+        if (pos.right !== 'auto') el.style.right = pos.right;
+    }
     function makeDraggable(el, handle) {
         let isDragging = false, startX, startY, iLeft, iTop;
         handle.onmousedown = (e) => {

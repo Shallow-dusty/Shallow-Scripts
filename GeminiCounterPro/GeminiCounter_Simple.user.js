@@ -196,10 +196,19 @@
     function createPanel() {
         const container = document.createElement('div');
         container.id = PANEL_ID;
-        if (savedPos.top !== 'auto') container.style.top = savedPos.top;
-        if (savedPos.left !== 'auto') container.style.left = savedPos.left;
-        if (savedPos.bottom !== 'auto') container.style.bottom = savedPos.bottom;
-        if (savedPos.right !== 'auto') container.style.right = savedPos.right;
+        const winW = window.innerWidth, winH = window.innerHeight;
+        const l = parseFloat(savedPos.left), t = parseFloat(savedPos.top);
+
+        if ((l && l > winW - 50) || (t && t > winH - 50)) {
+             container.style.top = 'auto'; container.style.left = 'auto';
+             container.style.bottom = '85px'; container.style.right = '30px';
+             GM_setValue(PANEL_POS_KEY, { top: 'auto', left: 'auto', bottom: '85px', right: '30px' });
+        } else {
+            if (savedPos.top !== 'auto') container.style.top = savedPos.top;
+            if (savedPos.left !== 'auto') container.style.left = savedPos.left;
+            if (savedPos.bottom !== 'auto') container.style.bottom = savedPos.bottom;
+            if (savedPos.right !== 'auto') container.style.right = savedPos.right;
+        }
 
         const header = document.createElement('div');
         header.className = 'gemini-drag-handle';

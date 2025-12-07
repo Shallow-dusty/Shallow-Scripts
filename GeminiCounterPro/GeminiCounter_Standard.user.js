@@ -58,7 +58,16 @@
     function createPanel() {
         const p = document.createElement('div'); p.id = PANEL_ID;
         const pos = GM_getValue(KEYS.POS, { bottom: '85px', right: '30px' });
-        Object.assign(p.style, pos);
+        
+        // Fix: Viewport Overflow Check
+        const winW = window.innerWidth, winH = window.innerHeight;
+        const l = parseFloat(pos.left), t = parseFloat(pos.top);
+        if ((l && l > winW - 50) || (t && t > winH - 50)) {
+           p.style.top = 'auto'; p.style.left = 'auto'; p.style.bottom = '85px'; p.style.right = '30px';
+           GM_setValue(KEYS.POS, { bottom: '85px', right: '30px' });
+        } else {
+           Object.assign(p.style, pos);
+        }
 
         const head = document.createElement('div'); head.className = 'g-head';
         head.innerHTML = '<span>STATS</span><span style="cursor:pointer">☰</span>';
