@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v5.6)
+// @name         Gemini Counter Ultimate (v5.6.1)
 // @namespace    http://tampermonkey.net/
-// @version      5.6
+// @version      5.6.1
 // @description  终极版：设置面板 + 每日配额 + 累计对话数 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Counter Ultimate v5.6 Starting...");
+    console.log("💎 Gemini Counter Ultimate v5.6.1 Starting...");
 
     // --- 🎨 主题配置 ---
     const THEMES = {
@@ -817,12 +817,24 @@
             URL.revokeObjectURL(url);
         };
         dataSection.appendChild(exportBtn);
+
+        // Reset Position Button
+        const resetPosBtn = document.createElement('button');
+        resetPosBtn.className = 'settings-btn';
+        resetPosBtn.textContent = '📍 Reset Panel Position';
+        resetPosBtn.onclick = () => {
+            GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
+            closeSettingsModal();
+            location.reload();
+        };
+        dataSection.appendChild(resetPosBtn);
+
         body.appendChild(dataSection);
 
         // Version
         const version = document.createElement('div');
         version.className = 'settings-version';
-        version.textContent = 'Gemini Counter Ultimate v5.6';
+        version.textContent = 'Gemini Counter Ultimate v5.6.1';
         body.appendChild(version);
 
         modal.appendChild(header);
@@ -836,21 +848,7 @@
         if (modal) modal.remove();
     }
 
-    // 油猴菜单命令
+    // 油猴菜单命令 (保留作为备用入口)
     GM_registerMenuCommand("🔄 Reset Position", () => { GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS); location.reload(); });
-    GM_registerMenuCommand("⏰ Set Reset Hour", () => {
-        const input = prompt(`Set daily reset hour (0-23).\nCurrent: ${resetHour}:00\n\nExample:\n0 = Midnight\n6 = 6 AM\n14 = 2 PM`, resetHour);
-        if (input !== null) {
-            const hour = parseInt(input, 10);
-            if (!isNaN(hour) && hour >= 0 && hour <= 23) {
-                resetHour = hour;
-                GM_setValue(GLOBAL_KEYS.RESET_HOUR, hour);
-                updateUI();
-                alert(`Reset hour set to ${hour}:00`);
-            } else {
-                alert("Invalid hour. Please enter a number between 0 and 23.");
-            }
-        }
-    });
 
 })();
