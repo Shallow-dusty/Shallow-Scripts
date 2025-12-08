@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v5.6.1)
+// @name         Gemini Counter Ultimate (v6.0)
 // @namespace    http://tampermonkey.net/
-// @version      5.6.1
-// @description  终极版：设置面板 + 每日配额 + 累计对话数 + 多窗口同步 + 主题系统
+// @version      6.0
+// @description  终极版：历史曲线图 + 设置面板 + 每日配额 + 累计对话数 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Counter Ultimate v5.6.1 Starting...");
+    console.log("💎 Gemini Counter Ultimate v6.0 Starting...");
 
     // --- 🎨 主题配置 ---
     const THEMES = {
@@ -121,6 +121,23 @@
     function getTodayChats() {
         const today = getDayKey(resetHour);
         return state.dailyCounts[today]?.chats || 0;
+    }
+
+    // 获取过去 7 天的数据 (用于曲线图)
+    function getLast7DaysData() {
+        const result = [];
+        for (let i = 6; i >= 0; i--) {
+            const d = new Date();
+            d.setDate(d.getDate() - i);
+            const key = d.toISOString().slice(0, 10);
+            result.push({
+                date: key,
+                label: `${d.getMonth() + 1}/${d.getDate()}`,
+                messages: state.dailyCounts[key]?.messages || 0,
+                chats: state.dailyCounts[key]?.chats || 0
+            });
+        }
+        return result;
     }
 
     // --- 🛠️ 核心功能 ---
@@ -789,6 +806,92 @@
         resetSection.appendChild(resetRow);
         body.appendChild(resetSection);
 
+        // Section: Usage History Chart
+        const chartSection = document.createElement('div');
+        chartSection.className = 'settings-section';
+        const chartTitle = document.createElement('div');
+        chartTitle.className = 'settings-section-title';
+        chartTitle.textContent = 'Usage History (Last 7 Days)';
+        chartSection.appendChild(chartTitle);
+
+        // SVG Chart
+        const chartContainer = document.createElement('div');
+        chartContainer.style.cssText = 'background: rgba(0,0,0,0.2); border-radius: 8px; padding: 10px; margin-top: 4px;';
+        
+        const data = getLast7DaysData();
+        const svgWidth = 248, svgHeight = 80, padding = 20;
+        const maxVal = Math.max(...data.map(d => d.messages), 1);
+        
+        // Calculate points
+        const points = data.map((d, i) => ({
+            x: padding + i * ((svgWidth - 2 * padding) / 6),
+            y: svgHeight - padding - (d.messages / maxVal) * (svgHeight - 2 * padding),
+            val: d.messages,
+            label: d.label
+        }));
+        
+        // Build SVG
+        const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+        svg.setAttribute('width', svgWidth);
+        svg.setAttribute('height', svgHeight + 20);
+        svg.setAttribute('viewBox', `0 0 ${svgWidth} ${svgHeight + 20}`);
+        
+        // Area fill
+        const areaPath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const areaD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ') 
+            + ` L ${points[6].x} ${svgHeight - padding} L ${points[0].x} ${svgHeight - padding} Z`;
+        areaPath.setAttribute('d', areaD);
+        areaPath.setAttribute('fill', 'rgba(138, 180, 248, 0.2)');
+        svg.appendChild(areaPath);
+        
+        // Line
+        const linePath = document.createElementNS('http://www.w3.org/2000/svg', 'path');
+        const lineD = points.map((p, i) => `${i === 0 ? 'M' : 'L'} ${p.x} ${p.y}`).join(' ');
+        linePath.setAttribute('d', lineD);
+        linePath.setAttribute('fill', 'none');
+        linePath.setAttribute('stroke', 'var(--accent, #8ab4f8)');
+        linePath.setAttribute('stroke-width', '2');
+        linePath.setAttribute('stroke-linecap', 'round');
+        linePath.setAttribute('stroke-linejoin', 'round');
+        svg.appendChild(linePath);
+        
+        // Data points and labels
+        points.forEach((p, i) => {
+            // Circle
+            const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+            circle.setAttribute('cx', p.x);
+            circle.setAttribute('cy', p.y);
+            circle.setAttribute('r', '3');
+            circle.setAttribute('fill', 'var(--accent, #8ab4f8)');
+            svg.appendChild(circle);
+            
+            // Value label (on hover area)
+            if (p.val > 0) {
+                const valText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                valText.setAttribute('x', p.x);
+                valText.setAttribute('y', p.y - 6);
+                valText.setAttribute('text-anchor', 'middle');
+                valText.setAttribute('font-size', '8');
+                valText.setAttribute('fill', 'var(--text-sub, #9aa0a6)');
+                valText.textContent = p.val;
+                svg.appendChild(valText);
+            }
+            
+            // X-axis date label
+            const dateText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            dateText.setAttribute('x', p.x);
+            dateText.setAttribute('y', svgHeight + 10);
+            dateText.setAttribute('text-anchor', 'middle');
+            dateText.setAttribute('font-size', '8');
+            dateText.setAttribute('fill', 'var(--text-sub, #9aa0a6)');
+            dateText.textContent = p.label;
+            svg.appendChild(dateText);
+        });
+        
+        chartContainer.appendChild(svg);
+        chartSection.appendChild(chartContainer);
+        body.appendChild(chartSection);
+
         // Section: Data
         const dataSection = document.createElement('div');
         dataSection.className = 'settings-section';
@@ -834,7 +937,7 @@
         // Version
         const version = document.createElement('div');
         version.className = 'settings-version';
-        version.textContent = 'Gemini Counter Ultimate v5.6.1';
+        version.textContent = 'Gemini Counter Ultimate v6.0';
         body.appendChild(version);
 
         modal.appendChild(header);

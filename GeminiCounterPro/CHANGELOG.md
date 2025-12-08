@@ -1,5 +1,17 @@
 # 📜 Gemini Counter Pro - Changelog
 
+### 📦 v6.x Series: Data Visualization (数据可视化)
+
+#### **v6.0**
+
+> _Current Version_
+
+- **📈 历史曲线图 (Usage Chart)**: Settings Modal 中新增过去 7 天的消息数折线图，纯 SVG 实现，无外部依赖。
+- **🎨 图表特性**: 填充区域 + 折线 + 数据点 + 日期标签，支持主题色适配。
+- **📊 数据洞察**: 直观展示每日使用趋势，一目了然。
+
+---
+
 ### 📦 v5.x Series: The Ultimate Edition (企业级/多用户/主题)
 
 _这一阶段不仅完善了功能，更是在与 Google 严格的 CSP 安全策略博弈中取得了最终胜利。_
