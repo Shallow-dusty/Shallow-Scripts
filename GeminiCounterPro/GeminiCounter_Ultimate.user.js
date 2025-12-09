@@ -1,7 +1,7 @@
 // ==UserScript==
 // @name         Gemini Counter Ultimate (v6.2)
 // @namespace    http://tampermonkey.net/
-// @version      6.2
+// @version      6.2.1
 // @description  终极版：历史曲线图 + 设置面板 + 每日配额 + 累计对话数 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -920,6 +920,15 @@
             GM_setValue(GLOBAL_KEYS.POS, { top: el.style.top, left: el.style.left, bottom: 'auto', right: 'auto' });
         });
     }
+
+    // --- 🔄 窗口聚焦自动同步 ---
+    document.addEventListener('visibilitychange', () => {
+        if (document.visibilityState === 'visible' && currentUser && currentUser !== TEMP_USER) {
+            // 用户切回此标签页，主动拉取最新数据
+            console.log("💎 Tab active, fetching latest data...");
+            loadDataForView(inspectingUser || currentUser);
+        }
+    });
 
     // --- ⚙️ Settings Modal ---
     const SETTINGS_MODAL_ID = 'gemini-settings-modal';
