@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v6.0)
+// @name         Gemini Counter Ultimate (v6.2)
 // @namespace    http://tampermonkey.net/
-// @version      6.0
+// @version      6.2
 // @description  终极版：历史曲线图 + 设置面板 + 每日配额 + 累计对话数 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -153,9 +153,9 @@
 
     function detectUser() {
         try {
-            const candidates = document.querySelectorAll('a[aria-label*="@"], button[aria-label*="@"], div[aria-label*="帐号"], div[aria-label*="Account"]');
+            const candidates = document.querySelectorAll('a[aria-label*="@"], button[aria-label*="@"], div[aria-label*="帐号"], div[aria-label*="Account"], img[alt*="@"], img[aria-label*="@"]');
             for (let el of candidates) {
-                const label = el.getAttribute('aria-label') || "";
+                const label = el.getAttribute('aria-label') || el.getAttribute('alt') || "";
                 const match = label.match(/([a-zA-Z0-9._-]+@[a-zA-Z0-9._-]+\.[a-zA-Z0-9._-]+)/);
                 if (match && match[1]) return match[1];
             }
@@ -209,6 +209,58 @@
             state.total = 0; state.totalChatsCreated = 0; state.chats = {}; state.dailyCounts = {};
         }
         updateUI();
+    }
+
+    // --- 🧮 统计算法 ---
+    function calculateStreaks(dailyData) {
+        const dates = Object.keys(dailyData).sort();
+        if (dates.length === 0) return { current: 0, best: 0 };
+
+        let current = 0;
+        let best = 0;
+        let temp = 0;
+        let lastDate = null;
+
+        // Best Streak
+        for (let dateStr of dates) {
+            if (dailyData[dateStr].messages === 0) continue;
+            const d = new Date(dateStr);
+            d.setHours(0,0,0,0);
+            
+            if (lastDate) {
+                const diff = (d - lastDate) / (1000 * 60 * 60 * 24);
+                if (diff === 1) {
+                    temp++;
+                } else if (diff > 1) { // Break in streak
+                    temp = 1;
+                }
+            } else {
+                temp = 1;
+            }
+            if (temp > best) best = temp;
+            lastDate = d;
+        }
+
+        // Current Streak
+        const todayStr = getDayKey(resetHour);
+        const yesterdayOnes = new Date(); yesterdayOnes.setDate(yesterdayOnes.getDate() - 1);
+        const yesterdayStr = yesterdayOnes.toISOString().slice(0, 10);
+        
+        // 如果今天有数据，从今天倒推；如果今天没数据，从昨天倒推（允许今天还没开始聊天）
+        let checkDate = (dailyData[todayStr]?.messages > 0) ? new Date(todayStr) : new Date(yesterdayStr);
+        current = 0;
+        
+        while (true) {
+            const key = checkDate.toISOString().slice(0, 10);
+            if (dailyData[key] && dailyData[key].messages > 0) {
+                current++;
+                checkDate.setDate(checkDate.getDate() - 1);
+            } else {
+                break;
+            }
+        }
+
+        return { current, best };
     }
 
     function saveCurrentUserData() {
@@ -338,6 +390,83 @@
             .settings-btn:hover { background: var(--row-hover, rgba(255,255,255,0.05)); color: var(--text-main, #fff); }
             .settings-btn.danger { color: #f28b82; border-color: #f28b82; }
             .settings-version { font-size: 10px; color: var(--text-sub, #9aa0a6); text-align: center; padding: 8px; opacity: 0.6; }
+
+            /* --- 📊 Dashboard Styles --- */
+            .dash-overlay {
+                position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                background: rgba(0,0,0,0.85); z-index: 2147483645;
+                display: flex; align-items: center; justify-content: center;
+                backdrop-filter: blur(5px);
+            }
+            .dash-modal {
+                width: 800px; max-width: 95vw; max-height: 90vh; overflow-y: auto;
+                background: var(--bg); border: 1px solid var(--border);
+                border-radius: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.6);
+                display: flex; flex-direction: column;
+            }
+            .dash-header {
+                padding: 24px 32px; border-bottom: 1px solid var(--border);
+                display: flex; justify-content: space-between; align-items: center;
+            }
+            .dash-title { font-size: 24px; font-weight: 300; color: var(--text-main); display: flex; align-items: center; gap: 12px; }
+            .dash-close { font-size: 28px; color: var(--text-sub); cursor: pointer; transition: 0.2s; }
+            .dash-close:hover { color: var(--accent); transform: scale(1.1); }
+            
+            .dash-content { padding: 32px; display: flex; flex-direction: column; gap: 32px; }
+            
+            /* Metric Cards */
+            .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
+            .metric-card {
+                background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+                border-radius: 16px; padding: 20px; text-align: center;
+                transition: transform 0.2s;
+            }
+            .metric-card:hover { transform: translateY(-2px); background: rgba(255,255,255,0.06); }
+            .metric-val { font-size: 32px; color: var(--text-main); font-weight: 300; margin-bottom: 4px; }
+            .metric-label { font-size: 12px; color: var(--text-sub); text-transform: uppercase; letter-spacing: 1px; }
+
+            /* Heatmap */
+            .heatmap-container {
+                background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+                border-radius: 16px; padding: 24px; overflow-x: auto;
+            }
+            .heatmap-title { font-size: 14px; color: var(--text-main); margin-bottom: 16px; display: flex; justify-content: space-between; }
+            .heatmap-grid { display: flex; gap: 4px; }
+            .heatmap-col { display: flex; flex-direction: column; gap: 4px; }
+            .heatmap-cell {
+                width: 12px; height: 12px; border-radius: 2px;
+                background: rgba(255,255,255,0.1); position: relative;
+            }
+            .heatmap-cell:hover { transform: scale(1.4); z-index: 10; border: 1px solid #fff; }
+            /* Tooltip for Heatmap logic is inline */
+            .heatmap-legend { display: flex; gap: 4px; align-items: center; font-size: 10px; color: var(--text-sub); }
+            .legend-item { width: 10px; height: 10px; border-radius: 2px; }
+            
+            /* Heatmap Axes */
+            .heatmap-wrapper { display: flex; gap: 8px; }
+            .heatmap-week-labels { display: flex; flex-direction: column; gap: 4px; padding-top: 18px; /* Align with cells (month header height) */ }
+            .week-label { height: 12px; font-size: 9px; line-height: 12px; color: var(--text-sub); opacity: 0.7; }
+            
+            .heatmap-main { display: flex; flex-direction: column; }
+            .heatmap-months { display: flex; gap: 4px; margin-bottom: 6px; height: 12px; }
+            .month-label { width: 12px; font-size: 9px; color: var(--text-sub); overflow: visible; white-space: nowrap; }
+
+            /* Custom Tooltip */
+            .g-tooltip {
+                position: fixed; background: rgba(0,0,0,0.9); border: 1px solid var(--border);
+                color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 10px;
+                pointer-events: none; z-index: 2147483647; opacity: 0; transition: opacity 0.1s;
+                transform: translate(-50%, -100%); margin-top: -8px;
+                box-shadow: 0 4px 12px rgba(0,0,0,0.5);
+            }
+            .g-tooltip.visible { opacity: 1; }
+
+            /* Level Colors (Dynamic via JS, defaults) */
+            .l-0 { background: rgba(255,255,255,0.05); }
+            .l-1 { background: rgba(138, 180, 248, 0.2); }
+            .l-2 { background: rgba(138, 180, 248, 0.4); }
+            .l-3 { background: rgba(138, 180, 248, 0.7); }
+            .l-4 { background: rgba(138, 180, 248, 1.0); }
         `);
     }
 
@@ -467,14 +596,28 @@
             pane.appendChild(row);
         });
 
-        // Settings Button
+        // Settings Button & Dashboard
         pane.appendChild(createSectionTitle(''));
+        const actionsRow = document.createElement('div');
+        actionsRow.style.display = 'flex';
+        actionsRow.style.gap = '8px';
+
+        const statsBtn = document.createElement('button');
+        statsBtn.className = 'g-btn';
+        statsBtn.textContent = '📊 Stats';
+        statsBtn.style.flex = '1';
+        statsBtn.onclick = (e) => { e.stopPropagation(); openDashboard(); };
+
         const settingsBtn = document.createElement('button');
         settingsBtn.className = 'g-btn';
-        settingsBtn.textContent = '⚙️ Settings';
+        settingsBtn.textContent = '⚙️';
+        settingsBtn.style.width = '32px';
+        settingsBtn.title = "Settings";
         settingsBtn.onclick = (e) => { e.stopPropagation(); openSettingsModal(); };
-        settingsBtn.onmousedown = (e) => e.stopPropagation();
-        pane.appendChild(settingsBtn);
+        
+        actionsRow.appendChild(statsBtn);
+        actionsRow.appendChild(settingsBtn);
+        pane.appendChild(actionsRow);
     }
 
     function createSectionTitle(text) {
@@ -631,7 +774,7 @@
             const poller = setInterval(() => {
                 attempts++;
                 const newCid = getChatId();
-                if (newCid && currentUser !== TEMP_USER) {
+                if (newCid) {
                     clearInterval(poller);
                     // 检测是否为新对话
                     if (!state.chats[newCid]) {
@@ -666,12 +809,47 @@
     function checkUserAndPanel() {
         const detected = detectUser();
         if (detected && detected !== currentUser) {
+            
+            // 💾 状态合并策略：从 Guest 切换到正式用户时，保留 Guest 期间产生的计数
+            let guestState = null;
+            if (currentUser === TEMP_USER) {
+                guestState = JSON.parse(JSON.stringify(state));
+            }
+
             currentUser = detected;
             registerUser(detected);
+            
             if (inspectingUser === TEMP_USER || inspectingUser === currentUser) {
                 inspectingUser = currentUser;
             }
             loadDataForView(inspectingUser);
+
+            // 执行合并
+            if (guestState && (guestState.total > 0 || Object.keys(guestState.chats).length > 0)) {
+                // 1. Merge Total
+                state.total += guestState.total;
+                state.totalChatsCreated += guestState.totalChatsCreated;
+                
+                // 2. Merge Daily
+                for (const [day, counts] of Object.entries(guestState.dailyCounts)) {
+                    if (!state.dailyCounts[day]) {
+                        state.dailyCounts[day] = counts;
+                    } else {
+                        state.dailyCounts[day].messages += counts.messages;
+                        state.dailyCounts[day].chats += counts.chats;
+                    }
+                }
+                
+                // 3. Merge Chats
+                for (const [cid, count] of Object.entries(guestState.chats)) {
+                    state.chats[cid] = (state.chats[cid] || 0) + count;
+                }
+                
+                console.log(`💎 Merged ${guestState.total} messages from Guest session to ${currentUser}`);
+                saveCurrentUserData();
+                updateUI();
+                if (state.isExpanded) renderDetailsPane();
+            }
         }
         if (!document.getElementById(PANEL_ID)) createPanel();
     }
@@ -949,6 +1127,246 @@
     function closeSettingsModal() {
         const modal = document.getElementById(SETTINGS_MODAL_ID);
         if (modal) modal.remove();
+    }
+
+    // --- 📊 Dashboard Modal ---
+    // --- 📊 Dashboard Modal ---
+    function openDashboard() {
+        const exist = document.getElementById('gemini-dashboard-overlay');
+        if (exist) return;
+
+        const overlay = document.createElement('div');
+        overlay.id = 'gemini-dashboard-overlay';
+        overlay.className = 'dash-overlay';
+        overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+        
+        const modal = document.createElement('div');
+        modal.className = 'dash-modal';
+        applyTheme(modal, currentTheme); 
+        
+        // Header
+        const header = document.createElement('div');
+        header.className = 'dash-header';
+        
+        const titleDiv = document.createElement('div');
+        titleDiv.className = 'dash-title';
+        titleDiv.textContent = '📊 Analytics ';
+        const userSpan = document.createElement('span');
+        userSpan.style.fontSize = '12px';
+        userSpan.style.opacity = '0.5';
+        userSpan.style.marginTop = '8px';
+        userSpan.textContent = currentUser.split('@')[0];
+        titleDiv.appendChild(userSpan);
+        
+        const close = document.createElement('div');
+        close.className = 'dash-close';
+        close.textContent = '×'; // Using textContent instead of HTML entity
+        close.onclick = () => overlay.remove();
+        
+        header.appendChild(titleDiv);
+        header.appendChild(close);
+        modal.appendChild(header);
+
+        // Content
+        const content = document.createElement('div');
+        content.className = 'dash-content';
+
+        // 1. Metric Cards
+        const streaks = calculateStreaks(state.dailyCounts);
+        const grid = document.createElement('div');
+        grid.className = 'metric-grid';
+        
+        const metrics = [
+            { label: 'Total Messages', val: state.total.toLocaleString() },
+            { label: 'Chats Created', val: state.totalChatsCreated.toLocaleString() },
+            { label: 'Current Streak', val: streaks.current + ' Days' },
+            { label: 'Best Streak', val: streaks.best + ' Days' },
+        ];
+
+        metrics.forEach(m => {
+            const card = document.createElement('div');
+            card.className = 'metric-card';
+            
+            const valDiv = document.createElement('div');
+            valDiv.className = 'metric-val';
+            valDiv.textContent = m.val;
+            
+            const labelDiv = document.createElement('div');
+            labelDiv.className = 'metric-label';
+            labelDiv.textContent = m.label;
+            
+            card.appendChild(valDiv);
+            card.appendChild(labelDiv);
+            grid.appendChild(card);
+        });
+        content.appendChild(grid);
+
+        // 2. Heatmap
+        const hmContainer = document.createElement('div');
+        hmContainer.className = 'heatmap-container';
+        
+        const hmHeader = document.createElement('div');
+        hmHeader.className = 'heatmap-title';
+        const titleSpan = document.createElement('span');
+        titleSpan.textContent = 'Activity (Last 365 Days)';
+        
+         // Legend
+        const legend = document.createElement('div');
+        legend.className = 'heatmap-legend';
+        legend.appendChild(document.createTextNode('Less '));
+        
+        ['l-0', 'l-1', 'l-3', 'l-4'].forEach(cls => {
+            const item = document.createElement('div');
+            item.className = `legend-item ${cls}`;
+            legend.appendChild(item);
+        });
+        
+        legend.appendChild(document.createTextNode(' More'));
+        
+        
+        hmHeader.appendChild(titleSpan);
+        hmHeader.appendChild(legend);
+        hmContainer.appendChild(hmHeader);
+
+        // Wrapper for axes
+        const hmWrapper = document.createElement('div');
+        hmWrapper.className = 'heatmap-wrapper';
+
+        // 1. Week Labels (Left Axis)
+        // Rows are 0(Sun) to 6(Sat). We typically show Mon(1), Wed(3), Fri(5)
+        const weekCol = document.createElement('div');
+        weekCol.className = 'heatmap-week-labels';
+        const days = ['', 'Mon', '', 'Wed', '', 'Fri', ''];
+        days.forEach(d => {
+            const label = document.createElement('div');
+            label.className = 'week-label';
+            label.textContent = d;
+            weekCol.appendChild(label);
+        });
+        hmWrapper.appendChild(weekCol);
+
+        // 2. Main Area (Months + Grid)
+        const hmMain = document.createElement('div');
+        hmMain.className = 'heatmap-main';
+
+        const monthRow = document.createElement('div');
+        monthRow.className = 'heatmap-months';
+        
+        const hmGrid = document.createElement('div');
+        hmGrid.className = 'heatmap-grid';
+        
+        // Generate Heatmap Data
+        const today = new Date();
+        const oneYearAgo = new Date();
+        oneYearAgo.setDate(today.getDate() - 365);
+        
+        // Find Max for scaling colors
+        let maxVal = 0;
+        Object.values(state.dailyCounts).forEach(v => { if (v.messages > maxVal) maxVal = v.messages; });
+        if (maxVal < 10) maxVal = 10; // floor
+
+        // Tooltip Element
+        let tooltip = document.getElementById('g-heatmap-tooltip');
+        if (!tooltip) {
+            tooltip = document.createElement('div');
+            tooltip.id = 'g-heatmap-tooltip';
+            tooltip.className = 'g-tooltip';
+            document.body.appendChild(tooltip);
+        }
+
+        // Logic for iterating weeks
+        let iterDate = new Date(oneYearAgo);
+        iterDate.setDate(iterDate.getDate() - iterDate.getDay()); // Align to Sunday
+        
+        let lastMonth = -1;
+
+        for (let week = 0; week < 53; week++) {
+            // -- Month Label Logic --
+            const currentMonth = iterDate.getMonth();
+            const mLabel = document.createElement('div');
+            mLabel.className = 'month-label';
+            
+            if (currentMonth !== lastMonth) {
+                const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                mLabel.textContent = monthNames[currentMonth];
+                lastMonth = currentMonth;
+            }
+            monthRow.appendChild(mLabel);
+
+            // -- Cells Logic --
+            const col = document.createElement('div');
+            col.className = 'heatmap-col';
+            for (let day = 0; day < 7; day++) {
+                const key = iterDate.toISOString().slice(0, 10);
+                const count = state.dailyCounts[key]?.messages || 0;
+                
+                const cell = document.createElement('div');
+                cell.className = 'heatmap-cell';
+                
+                let level = 'l-0';
+                if (count > 0) {
+                    const ratio = count / maxVal;
+                    if (ratio > 0.75) level = 'l-4';
+                    else if (ratio > 0.5) level = 'l-3';
+                    else if (ratio > 0.25) level = 'l-2';
+                    else level = 'l-1';
+                }
+                cell.classList.add(level);
+                
+                // cell.title = ... removed in favor of custom tooltip
+                // Custom Tooltip Events
+                cell.onmouseenter = (e) => {
+                    tooltip.textContent = ''; // Clear previous
+                    const b = document.createElement('div');
+                    b.style.fontWeight = 'bold';
+                    b.textContent = key;
+                    const sp = document.createElement('div');
+                    sp.textContent = `${count} messages`;
+                    tooltip.appendChild(b);
+                    tooltip.appendChild(sp);
+
+                    tooltip.classList.add('visible');
+                    const rect = cell.getBoundingClientRect();
+                    
+                    // Smart Positioning (Clamp to viewport)
+                    let left = rect.left + rect.width / 2;
+                    let top = rect.top;
+                    
+                    // Simple offset
+                    tooltip.style.left = left + 'px';
+                    tooltip.style.top = top + 'px';
+                    
+                    // Post-render adjustment
+                    const ttRect = tooltip.getBoundingClientRect();
+                    if (ttRect.right > window.innerWidth) tooltip.style.left = (window.innerWidth - ttRect.width / 2 - 10) + 'px';
+                    if (ttRect.left < 0) tooltip.style.left = (ttRect.width / 2 + 10) + 'px';
+                };
+                cell.onmouseleave = () => tooltip.classList.remove('visible');
+                
+                col.appendChild(cell);
+                iterDate.setDate(iterDate.getDate() + 1);
+                
+                if (iterDate > today && day === today.getDay()) break; 
+            }
+            hmGrid.appendChild(col);
+            if (iterDate > today) break;
+        }
+        
+        hmMain.appendChild(monthRow);
+        hmMain.appendChild(hmGrid);
+        hmWrapper.appendChild(hmMain);
+        
+        hmContainer.appendChild(hmWrapper);
+        content.appendChild(hmContainer);
+
+        modal.appendChild(content);
+        overlay.appendChild(modal);
+        document.body.appendChild(overlay);
+
+        // Auto-scroll heatmap to end (latest date)
+        setTimeout(() => {
+            hmContainer.scrollLeft = hmContainer.scrollWidth;
+        }, 0);
     }
 
     // 油猴菜单命令 (保留作为备用入口)

@@ -2,9 +2,38 @@
 
 ### 📦 v6.x Series: Data Visualization (数据可视化)
 
+#### **v6.2**
+
+> _2025/12/10_
+
+- **📈 热力图体验升级 (Heatmap UX)**:
+  - 实装了 **Grid Axes** (顶部月份 + 左侧星期坐标)，数据可读性与 GitHub/GitLab 对齐。
+  - 新增 **Auto-Scroll** 机制，仪表盘打开时热力图自动滚动至最右侧（今日），无需手动拖拽。
+- **🎈 智能 Tooltip (Smart Tooltip)**:
+  - 移除了原生的 Title 属性，替换为 **Custom Tooltip** 浮层。
+  - 实现了 **Viewport Clamping** (边缘检测)，确保提示框永远不会被屏幕边缘遮挡。
+- **🚀 性能优化**: Tooltip 逻辑完全移除 DOM 注入，彻底解决 CSP 风险，响应更流畅。
+
+#### **v6.1**
+
+> _2025/12/09_
+
+- **📊 独立数据仪表盘 (Analytics Dashboard)**: 新增全屏级统计面板，点击详情页底部的 `📊 Stats` 按钮进入。
+- **🔥 年度热力图 (Activity Heatmap)**: 引入 GitHub 风格的年度活跃度热力图，可视化展示过去 365 天的对话频率。
+- **🏆 连胜统计 (Streak Tracking)**: 自动计算 "Current Streak" (当前连续打卡天数) 和 "Best Streak" (历史最佳连胜)。
+- **💎 核心指标**: 仪表盘顶部展示 Lifetime Messages, Chats Created 等关键数据卡片。
+- **UI 优化**: 详情面板底部操作区重新布局，分离了统计与设置入口。
+
+#### **v6.0.1**
+
+> _2025/12/09_
+
+- **🐛 核心修复**: 解决了新窗口/新会话中首次交互计数丢失的竞态 Bug (Guest 状态合并机制)。
+- **🔍 识别增强**: 增加 `img[alt]` 选择器，提高用户检测速度。
+
 #### **v6.0**
 
-> _Current Version_
+> _2025/12/09_
 
 - **📈 历史曲线图 (Usage Chart)**: Settings Modal 中新增过去 7 天的消息数折线图，纯 SVG 实现，无外部依赖。
 - **🎨 图表特性**: 填充区域 + 折线 + 数据点 + 日期标签，支持主题色适配。
