@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v6.2)
+// @name         Gemini Counter Ultimate (v6.3)
 // @namespace    http://tampermonkey.net/
-// @version      6.2.1
+// @version      6.3
 // @description  终极版：历史曲线图 + 设置面板 + 每日配额 + 累计对话数 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Counter Ultimate v6.0 Starting...");
+    console.log("💎 Gemini Counter Ultimate v6.3 Starting...");
 
     // --- 🎨 主题配置 ---
     const THEMES = {
@@ -196,6 +196,7 @@
         const storageKey = `gemini_store_${targetUser}`;
         const savedData = GM_getValue(storageKey, null);
         if (savedData) {
+            // console.log(`💎 Loaded storage for ${targetUser}: Total=${savedData.total}, Chats=${Object.keys(savedData.chats || {}).length}`);
             state.total = savedData.total || 0;
             state.totalChatsCreated = savedData.totalChatsCreated || 0;
             state.chats = savedData.chats || {};
@@ -206,6 +207,7 @@
                 state.dailyCounts[today] = { messages: savedData.session, chats: 0 };
             }
         } else {
+            console.warn(`💎 No storage found for ${targetUser}, init empty state.`);
             state.total = 0; state.totalChatsCreated = 0; state.chats = {}; state.dailyCounts = {};
         }
         updateUI();
@@ -276,8 +278,12 @@
 
     function getChatId() {
         try {
+            // 兼容性增强：处理可能的尾部斜杠或参数
             const match = window.location.pathname.match(/\/app\/([a-zA-Z0-9\-_]+)/);
-            return match ? match[1] : null;
+            const id = match ? match[1] : null;
+            // Console Debug (仅在有问题时开启，或者通过 localStorage 开启)
+            // console.log(`Current URL ID: ${id}`);
+            return id;
         } catch (e) { return null; }
     }
 
@@ -686,8 +692,14 @@
                 val = "--"; sub = "Different Context"; disableBtn = true;
             } else {
                 const cid = getChatId();
-                val = cid ? (state.chats[cid] || 0) : 0;
+                const count = cid ? (state.chats[cid] || 0) : 0;
+                val = count;
+                // Debug info in title
                 sub = cid ? `ID: ${cid.slice(0, 8)}...` : 'ID: New Chat';
+                if (cid && count === 0 && state.total > 0) {
+                     // 异常情况 Debug：有总数但当前对话为0？
+                     console.warn(`💎 ID Mismatch Debug: URL_ID=${cid}, State_Keys=${Object.keys(state.chats).slice(-3)}`);
+                }
                 btn = "Reset Chat";
             }
         } else if (state.viewMode === 'chatsCreated') {
@@ -862,12 +874,15 @@
         const savedTop = parseFloat(pos.top);
 
         if ((savedLeft && savedLeft > winW - 50) || (savedTop && savedTop > winH - 50)) {
-            console.warn("💎 Panel off-screen detected. Resetting.");
-            el.style.top = 'auto';
-            el.style.left = 'auto';
-            el.style.bottom = DEFAULT_POS.bottom;
-            el.style.right = DEFAULT_POS.right;
-            GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
+            // Only warn if it's really out of bounds (ignoring 'auto')
+            if (pos.left !== 'auto' && pos.top !== 'auto') {
+                console.warn(`💎 Panel off-screen detected (Pos: ${pos.left}, ${pos.top} | Win: ${winW}x${winH}). Resetting.`);
+                el.style.top = 'auto';
+                el.style.left = 'auto';
+                el.style.bottom = DEFAULT_POS.bottom;
+                el.style.right = DEFAULT_POS.right;
+                GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
+            }
         } else {
             if (pos.top !== 'auto') el.style.top = pos.top;
             if (pos.left !== 'auto') el.style.left = pos.left;
