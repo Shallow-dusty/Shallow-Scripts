@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v7.0)
+// @name         Gemini Counter Ultimate (v7.1)
 // @namespace    http://tampermonkey.net/
-// @version      7.0
-// @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 更多功能扩展
+// @version      7.1
+// @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v7.0 (Modular Architecture) Starting...");
+    console.log("💎 Gemini Assistant v7.1 (Modular Architecture) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -588,7 +588,7 @@
     ModuleRegistry.register(CounterModule);
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
-    // ║                    FOLDERS MODULE (文件夹模块) - 占位                      ║
+    // ║                      FOLDERS MODULE (文件夹模块)                           ║
     // ╚══════════════════════════════════════════════════════════════════════════╝
 
     const FoldersModule = {
@@ -596,22 +596,752 @@
         name: '对话文件夹',
         description: '整理对话到自定义文件夹',
         icon: '📁',
-        defaultEnabled: false,  // 默认禁用，开发中
+        defaultEnabled: false,
 
+        // --- 模块私有常量 ---
+        STORAGE_KEY: 'gemini_folders_data',
+        FOLDER_COLORS: ['#8ab4f8', '#81c995', '#f28b82', '#fdd663', '#d7aefb', '#78d9ec', '#fcad70', '#c58af9'],
+        SELECTORS: {
+            sidebar: 'nav, [role="navigation"]',
+            chatList: '.conversation-list, [data-conversations], nav > div > div',
+            chatItem: 'a[href*="/app/"], [data-conversation-id]',
+            chatTitle: '.conversation-title, span, div'
+        },
+
+        // --- 模块私有状态 ---
+        data: {
+            folders: {},        // { folderId: { name, color, order, collapsed } }
+            chatToFolder: {},   // { chatId: folderId }
+            folderOrder: []     // [folderId, folderId, ...]
+        },
+        observer: null,
+        sidebarEl: null,
+        injected: false,
+        dragState: null,
+
+        // --- 生命周期 ---
         init() {
-            console.log('💎 FoldersModule initialized (Coming Soon)');
+            this.loadData();
+            this.injectStyles();
+            this.startObserver();
+            console.log('💎 FoldersModule initialized');
         },
 
         destroy() {
+            if (this.observer) {
+                this.observer.disconnect();
+                this.observer = null;
+            }
+            // 移除注入的 UI
+            document.querySelectorAll('.gf-injected').forEach(el => el.remove());
+            this.injected = false;
             console.log('💎 FoldersModule destroyed');
         },
 
         onUserChange(user) {
-            // TODO: Load folder structure for user
+            this.loadData();
+            this.renderFolders();
+        },
+
+        // --- 数据管理 ---
+        loadData() {
+            const user = Core.getCurrentUser();
+            const key = user && user !== TEMP_USER ? `${this.STORAGE_KEY}_${user}` : this.STORAGE_KEY;
+            const saved = GM_getValue(key, null);
+            if (saved) {
+                this.data = {
+                    folders: saved.folders || {},
+                    chatToFolder: saved.chatToFolder || {},
+                    folderOrder: saved.folderOrder || Object.keys(saved.folders || {})
+                };
+            } else {
+                this.data = { folders: {}, chatToFolder: {}, folderOrder: [] };
+            }
+        },
+
+        saveData() {
+            const user = Core.getCurrentUser();
+            const key = user && user !== TEMP_USER ? `${this.STORAGE_KEY}_${user}` : this.STORAGE_KEY;
+            GM_setValue(key, this.data);
+        },
+
+        // --- 文件夹 CRUD ---
+        createFolder(name, color) {
+            const id = 'folder_' + Date.now();
+            this.data.folders[id] = {
+                name: name || 'New Folder',
+                color: color || this.FOLDER_COLORS[Object.keys(this.data.folders).length % this.FOLDER_COLORS.length],
+                order: this.data.folderOrder.length,
+                collapsed: false
+            };
+            this.data.folderOrder.push(id);
+            this.saveData();
+            this.renderFolders();
+            return id;
+        },
+
+        renameFolder(folderId, newName) {
+            if (this.data.folders[folderId]) {
+                this.data.folders[folderId].name = newName;
+                this.saveData();
+                this.renderFolders();
+            }
+        },
+
+        deleteFolder(folderId) {
+            if (!this.data.folders[folderId]) return;
+            // 移除文件夹内的聊天映射
+            Object.keys(this.data.chatToFolder).forEach(chatId => {
+                if (this.data.chatToFolder[chatId] === folderId) {
+                    delete this.data.chatToFolder[chatId];
+                }
+            });
+            delete this.data.folders[folderId];
+            this.data.folderOrder = this.data.folderOrder.filter(id => id !== folderId);
+            this.saveData();
+            this.renderFolders();
+        },
+
+        toggleFolderCollapse(folderId) {
+            if (this.data.folders[folderId]) {
+                this.data.folders[folderId].collapsed = !this.data.folders[folderId].collapsed;
+                this.saveData();
+                this.renderFolders();
+            }
+        },
+
+        setFolderColor(folderId, color) {
+            if (this.data.folders[folderId]) {
+                this.data.folders[folderId].color = color;
+                this.saveData();
+                this.renderFolders();
+            }
+        },
+
+        moveChatToFolder(chatId, folderId) {
+            if (folderId === null) {
+                delete this.data.chatToFolder[chatId];
+            } else {
+                this.data.chatToFolder[chatId] = folderId;
+            }
+            this.saveData();
+            this.renderFolders();
+        },
+
+        // --- DOM 观察 ---
+        startObserver() {
+            const tryInject = () => {
+                const sidebar = document.querySelector(this.SELECTORS.sidebar);
+                if (sidebar && !this.injected) {
+                    this.sidebarEl = sidebar;
+                    this.injectUI();
+                    this.injected = true;
+                }
+                // 持续监听聊天列表变化
+                if (this.injected) {
+                    this.renderFolders();
+                }
+            };
+
+            // 初始尝试
+            setTimeout(tryInject, 1000);
+
+            // MutationObserver 监听 DOM 变化
+            this.observer = new MutationObserver(() => {
+                if (!this.injected) {
+                    tryInject();
+                } else {
+                    // 聊天列表可能更新，延迟渲染
+                    clearTimeout(this._renderTimeout);
+                    this._renderTimeout = setTimeout(() => this.renderFolders(), 300);
+                }
+            });
+
+            this.observer.observe(document.body, {
+                childList: true,
+                subtree: true
+            });
+        },
+
+        // --- UI 注入 ---
+        injectStyles() {
+            GM_addStyle(`
+                /* Folder Header */
+                .gf-folder-header {
+                    display: flex;
+                    align-items: center;
+                    padding: 8px 12px;
+                    margin: 4px 8px;
+                    border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.05);
+                    cursor: pointer;
+                    user-select: none;
+                    transition: background 0.2s;
+                }
+                .gf-folder-header:hover {
+                    background: rgba(255, 255, 255, 0.1);
+                }
+                .gf-folder-color {
+                    width: 12px;
+                    height: 12px;
+                    border-radius: 3px;
+                    margin-right: 8px;
+                    flex-shrink: 0;
+                }
+                .gf-folder-name {
+                    flex: 1;
+                    font-size: 13px;
+                    font-weight: 500;
+                    color: var(--text-main, #e8eaed);
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
+                }
+                .gf-folder-count {
+                    font-size: 11px;
+                    color: var(--text-sub, #9aa0a6);
+                    margin-right: 8px;
+                }
+                .gf-folder-toggle {
+                    font-size: 10px;
+                    color: var(--text-sub, #9aa0a6);
+                    transition: transform 0.2s;
+                }
+                .gf-folder-header.collapsed .gf-folder-toggle {
+                    transform: rotate(-90deg);
+                }
+                .gf-folder-actions {
+                    display: none;
+                    gap: 4px;
+                    margin-left: 4px;
+                }
+                .gf-folder-header:hover .gf-folder-actions {
+                    display: flex;
+                }
+                .gf-folder-action-btn {
+                    width: 20px;
+                    height: 20px;
+                    border: none;
+                    background: transparent;
+                    color: var(--text-sub, #9aa0a6);
+                    cursor: pointer;
+                    border-radius: 4px;
+                    font-size: 12px;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .gf-folder-action-btn:hover {
+                    background: rgba(255, 255, 255, 0.1);
+                    color: var(--text-main, #e8eaed);
+                }
+
+                /* Folder Content */
+                .gf-folder-content {
+                    overflow: hidden;
+                    transition: max-height 0.3s ease;
+                }
+                .gf-folder-content.collapsed {
+                    max-height: 0 !important;
+                }
+
+                /* Chat Item in Folder */
+                .gf-chat-item {
+                    margin-left: 20px;
+                    border-left: 2px solid transparent;
+                    transition: border-color 0.2s;
+                }
+                .gf-chat-item.dragging {
+                    opacity: 0.5;
+                }
+                .gf-chat-item[data-folder] {
+                    border-left-color: var(--folder-color, transparent);
+                }
+
+                /* Add Folder Button */
+                .gf-add-folder-btn {
+                    display: flex;
+                    align-items: center;
+                    gap: 8px;
+                    padding: 8px 16px;
+                    margin: 8px;
+                    border: 1px dashed rgba(255, 255, 255, 0.2);
+                    border-radius: 8px;
+                    background: transparent;
+                    color: var(--text-sub, #9aa0a6);
+                    font-size: 12px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .gf-add-folder-btn:hover {
+                    background: rgba(255, 255, 255, 0.05);
+                    border-color: rgba(255, 255, 255, 0.3);
+                    color: var(--text-main, #e8eaed);
+                }
+
+                /* Uncategorized Section */
+                .gf-uncategorized-header {
+                    display: flex;
+                    align-items: center;
+                    padding: 6px 12px;
+                    margin: 4px 8px;
+                    font-size: 11px;
+                    color: var(--text-sub, #9aa0a6);
+                    text-transform: uppercase;
+                    letter-spacing: 0.5px;
+                }
+
+                /* Drag Drop */
+                .gf-drop-zone {
+                    min-height: 4px;
+                    margin: 2px 8px;
+                    border-radius: 4px;
+                    transition: all 0.2s;
+                }
+                .gf-drop-zone.active {
+                    min-height: 32px;
+                    background: rgba(138, 180, 248, 0.2);
+                    border: 2px dashed rgba(138, 180, 248, 0.5);
+                }
+
+                /* Folder Edit Modal */
+                .gf-modal-overlay {
+                    position: fixed;
+                    top: 0;
+                    left: 0;
+                    width: 100vw;
+                    height: 100vh;
+                    background: rgba(0, 0, 0, 0.6);
+                    z-index: 2147483646;
+                    display: flex;
+                    align-items: center;
+                    justify-content: center;
+                }
+                .gf-modal {
+                    width: 280px;
+                    background: var(--bg, #202124);
+                    border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+                    border-radius: 16px;
+                    padding: 20px;
+                    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+                }
+                .gf-modal-title {
+                    font-size: 16px;
+                    font-weight: 500;
+                    color: var(--text-main, #e8eaed);
+                    margin-bottom: 16px;
+                }
+                .gf-modal-input {
+                    width: 100%;
+                    padding: 10px 12px;
+                    border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
+                    border-radius: 8px;
+                    background: rgba(255, 255, 255, 0.05);
+                    color: var(--text-main, #e8eaed);
+                    font-size: 14px;
+                    margin-bottom: 12px;
+                    box-sizing: border-box;
+                }
+                .gf-modal-input:focus {
+                    outline: none;
+                    border-color: var(--accent, #8ab4f8);
+                }
+                .gf-modal-colors {
+                    display: flex;
+                    gap: 8px;
+                    flex-wrap: wrap;
+                    margin-bottom: 16px;
+                }
+                .gf-color-option {
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 50%;
+                    cursor: pointer;
+                    border: 2px solid transparent;
+                    transition: transform 0.2s, border-color 0.2s;
+                }
+                .gf-color-option:hover {
+                    transform: scale(1.1);
+                }
+                .gf-color-option.selected {
+                    border-color: #fff;
+                }
+                .gf-modal-actions {
+                    display: flex;
+                    gap: 8px;
+                    justify-content: flex-end;
+                }
+                .gf-modal-btn {
+                    padding: 8px 16px;
+                    border: none;
+                    border-radius: 8px;
+                    font-size: 13px;
+                    cursor: pointer;
+                    transition: all 0.2s;
+                }
+                .gf-modal-btn.primary {
+                    background: var(--accent, #8ab4f8);
+                    color: #000;
+                }
+                .gf-modal-btn.secondary {
+                    background: rgba(255, 255, 255, 0.1);
+                    color: var(--text-main, #e8eaed);
+                }
+                .gf-modal-btn.danger {
+                    background: rgba(242, 139, 130, 0.2);
+                    color: #f28b82;
+                }
+                .gf-modal-btn:hover {
+                    filter: brightness(1.1);
+                }
+
+                /* Container */
+                .gf-container {
+                    margin-top: 8px;
+                }
+                .gf-injected { /* marker class */ }
+            `);
+        },
+
+        injectUI() {
+            // 查找侧边栏中的聊天列表区域
+            const nav = document.querySelector('nav');
+            if (!nav) return;
+
+            // 创建文件夹容器
+            const container = document.createElement('div');
+            container.className = 'gf-container gf-injected';
+            container.id = 'gf-folders-container';
+
+            // 添加"新建文件夹"按钮
+            const addBtn = document.createElement('button');
+            addBtn.className = 'gf-add-folder-btn gf-injected';
+            addBtn.innerHTML = '<span>📁</span><span>New Folder</span>';
+            addBtn.onclick = () => this.showCreateFolderModal();
+
+            // 尝试插入到对话列表之前
+            const chatHeading = nav.querySelector('h1, [role="heading"]');
+            if (chatHeading && chatHeading.parentElement) {
+                chatHeading.parentElement.insertBefore(addBtn, chatHeading.nextSibling);
+                chatHeading.parentElement.insertBefore(container, addBtn.nextSibling);
+            } else {
+                // 备选：插入到 nav 开头
+                nav.insertBefore(container, nav.firstChild);
+                nav.insertBefore(addBtn, container);
+            }
+
+            this.renderFolders();
+        },
+
+        // --- 渲染文件夹 ---
+        renderFolders() {
+            const container = document.getElementById('gf-folders-container');
+            if (!container) return;
+
+            container.replaceChildren();
+
+            // 获取所有聊天项
+            const chatItems = this.getChatItems();
+            const chatsByFolder = {};
+            const uncategorized = [];
+
+            // 分类聊天
+            chatItems.forEach(item => {
+                const chatId = this.getChatId(item);
+                if (!chatId) return;
+
+                const folderId = this.data.chatToFolder[chatId];
+                if (folderId && this.data.folders[folderId]) {
+                    if (!chatsByFolder[folderId]) chatsByFolder[folderId] = [];
+                    chatsByFolder[folderId].push({ el: item, id: chatId });
+                } else {
+                    uncategorized.push({ el: item, id: chatId });
+                }
+            });
+
+            // 渲染文件夹
+            this.data.folderOrder.forEach(folderId => {
+                const folder = this.data.folders[folderId];
+                if (!folder) return;
+
+                const chats = chatsByFolder[folderId] || [];
+                const folderEl = this.createFolderElement(folderId, folder, chats);
+                container.appendChild(folderEl);
+            });
+
+            // 渲染未分类
+            if (uncategorized.length > 0 && this.data.folderOrder.length > 0) {
+                const uncatHeader = document.createElement('div');
+                uncatHeader.className = 'gf-uncategorized-header';
+                uncatHeader.textContent = `Uncategorized (${uncategorized.length})`;
+                container.appendChild(uncatHeader);
+            }
+
+            // 设置拖拽
+            this.setupDragDrop();
+        },
+
+        createFolderElement(folderId, folder, chats) {
+            const wrapper = document.createElement('div');
+            wrapper.className = 'gf-folder-wrapper';
+            wrapper.dataset.folderId = folderId;
+
+            // Header
+            const header = document.createElement('div');
+            header.className = `gf-folder-header ${folder.collapsed ? 'collapsed' : ''}`;
+
+            const colorDot = document.createElement('div');
+            colorDot.className = 'gf-folder-color';
+            colorDot.style.background = folder.color;
+
+            const name = document.createElement('span');
+            name.className = 'gf-folder-name';
+            name.textContent = folder.name;
+
+            const count = document.createElement('span');
+            count.className = 'gf-folder-count';
+            count.textContent = chats.length;
+
+            const toggle = document.createElement('span');
+            toggle.className = 'gf-folder-toggle';
+            toggle.textContent = '▼';
+
+            const actions = document.createElement('div');
+            actions.className = 'gf-folder-actions';
+
+            const editBtn = document.createElement('button');
+            editBtn.className = 'gf-folder-action-btn';
+            editBtn.textContent = '✏️';
+            editBtn.title = 'Edit';
+            editBtn.onclick = (e) => { e.stopPropagation(); this.showEditFolderModal(folderId); };
+
+            const deleteBtn = document.createElement('button');
+            deleteBtn.className = 'gf-folder-action-btn';
+            deleteBtn.textContent = '🗑️';
+            deleteBtn.title = 'Delete';
+            deleteBtn.onclick = (e) => { e.stopPropagation(); this.confirmDeleteFolder(folderId); };
+
+            actions.appendChild(editBtn);
+            actions.appendChild(deleteBtn);
+
+            header.appendChild(colorDot);
+            header.appendChild(name);
+            header.appendChild(count);
+            header.appendChild(actions);
+            header.appendChild(toggle);
+
+            header.onclick = () => this.toggleFolderCollapse(folderId);
+
+            // Content
+            const content = document.createElement('div');
+            content.className = `gf-folder-content ${folder.collapsed ? 'collapsed' : ''}`;
+            content.style.setProperty('--folder-color', folder.color);
+
+            // Drop zone
+            const dropZone = document.createElement('div');
+            dropZone.className = 'gf-drop-zone';
+            dropZone.dataset.targetFolder = folderId;
+            content.appendChild(dropZone);
+
+            // 设置内容高度
+            if (!folder.collapsed) {
+                content.style.maxHeight = (chats.length * 48 + 40) + 'px';
+            }
+
+            wrapper.appendChild(header);
+            wrapper.appendChild(content);
+
+            return wrapper;
+        },
+
+        // --- 获取聊天列表 ---
+        getChatItems() {
+            return Array.from(document.querySelectorAll('nav a[href*="/app/"]'));
+        },
+
+        getChatId(element) {
+            const href = element.getAttribute('href') || '';
+            const match = href.match(/\/app\/([a-zA-Z0-9\-_]+)/);
+            return match ? match[1] : null;
+        },
+
+        // --- 拖拽功能 ---
+        setupDragDrop() {
+            const chatItems = this.getChatItems();
+
+            chatItems.forEach(item => {
+                item.setAttribute('draggable', 'true');
+                item.classList.add('gf-chat-item');
+
+                const chatId = this.getChatId(item);
+                if (chatId && this.data.chatToFolder[chatId]) {
+                    item.dataset.folder = this.data.chatToFolder[chatId];
+                    const folder = this.data.folders[this.data.chatToFolder[chatId]];
+                    if (folder) {
+                        item.style.setProperty('--folder-color', folder.color);
+                    }
+                }
+
+                item.ondragstart = (e) => {
+                    this.dragState = { chatId: this.getChatId(item), element: item };
+                    item.classList.add('dragging');
+                    e.dataTransfer.effectAllowed = 'move';
+                };
+
+                item.ondragend = () => {
+                    item.classList.remove('dragging');
+                    this.dragState = null;
+                    document.querySelectorAll('.gf-drop-zone.active').forEach(z => z.classList.remove('active'));
+                };
+            });
+
+            // 设置 drop zones
+            document.querySelectorAll('.gf-drop-zone').forEach(zone => {
+                zone.ondragover = (e) => {
+                    e.preventDefault();
+                    zone.classList.add('active');
+                };
+                zone.ondragleave = () => {
+                    zone.classList.remove('active');
+                };
+                zone.ondrop = (e) => {
+                    e.preventDefault();
+                    zone.classList.remove('active');
+                    if (this.dragState) {
+                        const targetFolder = zone.dataset.targetFolder || null;
+                        this.moveChatToFolder(this.dragState.chatId, targetFolder);
+                    }
+                };
+            });
+
+            // 文件夹 header 也可作为 drop target
+            document.querySelectorAll('.gf-folder-header').forEach(header => {
+                const wrapper = header.closest('.gf-folder-wrapper');
+                const folderId = wrapper?.dataset.folderId;
+
+                header.ondragover = (e) => {
+                    e.preventDefault();
+                    header.style.background = 'rgba(138, 180, 248, 0.2)';
+                };
+                header.ondragleave = () => {
+                    header.style.background = '';
+                };
+                header.ondrop = (e) => {
+                    e.preventDefault();
+                    header.style.background = '';
+                    if (this.dragState && folderId) {
+                        this.moveChatToFolder(this.dragState.chatId, folderId);
+                    }
+                };
+            });
+        },
+
+        // --- 模态框 ---
+        showCreateFolderModal() {
+            this.showFolderModal(null, 'Create Folder', '', this.FOLDER_COLORS[0]);
+        },
+
+        showEditFolderModal(folderId) {
+            const folder = this.data.folders[folderId];
+            if (!folder) return;
+            this.showFolderModal(folderId, 'Edit Folder', folder.name, folder.color);
+        },
+
+        showFolderModal(folderId, title, currentName, currentColor) {
+            const isEdit = folderId !== null;
+
+            const overlay = document.createElement('div');
+            overlay.className = 'gf-modal-overlay gf-injected';
+            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+            const modal = document.createElement('div');
+            modal.className = 'gf-modal';
+            Core.applyTheme(modal, currentTheme);
+
+            const titleEl = document.createElement('div');
+            titleEl.className = 'gf-modal-title';
+            titleEl.textContent = title;
+
+            const input = document.createElement('input');
+            input.className = 'gf-modal-input';
+            input.type = 'text';
+            input.placeholder = 'Folder name';
+            input.value = currentName;
+
+            const colorsContainer = document.createElement('div');
+            colorsContainer.className = 'gf-modal-colors';
+
+            let selectedColor = currentColor;
+            this.FOLDER_COLORS.forEach(color => {
+                const colorBtn = document.createElement('div');
+                colorBtn.className = `gf-color-option ${color === selectedColor ? 'selected' : ''}`;
+                colorBtn.style.background = color;
+                colorBtn.onclick = () => {
+                    colorsContainer.querySelectorAll('.gf-color-option').forEach(c => c.classList.remove('selected'));
+                    colorBtn.classList.add('selected');
+                    selectedColor = color;
+                };
+                colorsContainer.appendChild(colorBtn);
+            });
+
+            const actions = document.createElement('div');
+            actions.className = 'gf-modal-actions';
+
+            if (isEdit) {
+                const deleteBtn = document.createElement('button');
+                deleteBtn.className = 'gf-modal-btn danger';
+                deleteBtn.textContent = 'Delete';
+                deleteBtn.onclick = () => {
+                    this.deleteFolder(folderId);
+                    overlay.remove();
+                };
+                actions.appendChild(deleteBtn);
+            }
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.className = 'gf-modal-btn secondary';
+            cancelBtn.textContent = 'Cancel';
+            cancelBtn.onclick = () => overlay.remove();
+
+            const saveBtn = document.createElement('button');
+            saveBtn.className = 'gf-modal-btn primary';
+            saveBtn.textContent = isEdit ? 'Save' : 'Create';
+            saveBtn.onclick = () => {
+                const name = input.value.trim() || 'New Folder';
+                if (isEdit) {
+                    this.renameFolder(folderId, name);
+                    this.setFolderColor(folderId, selectedColor);
+                } else {
+                    this.createFolder(name, selectedColor);
+                }
+                overlay.remove();
+            };
+
+            actions.appendChild(cancelBtn);
+            actions.appendChild(saveBtn);
+
+            modal.appendChild(titleEl);
+            modal.appendChild(input);
+            modal.appendChild(colorsContainer);
+            modal.appendChild(actions);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+
+            input.focus();
+            input.select();
+        },
+
+        confirmDeleteFolder(folderId) {
+            const folder = this.data.folders[folderId];
+            if (!folder) return;
+
+            if (confirm(`Delete folder "${folder.name}"? Chats will be moved to Uncategorized.`)) {
+                this.deleteFolder(folderId);
+            }
         }
     };
 
-    // 注册文件夹模块（占位）
+    // 注册文件夹模块
     ModuleRegistry.register(FoldersModule);
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
@@ -1562,7 +2292,7 @@
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v7.0 (Modular)';
+            version.textContent = 'Gemini Assistant v7.1 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
