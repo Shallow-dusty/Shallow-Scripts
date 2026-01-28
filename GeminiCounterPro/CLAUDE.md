@@ -17,6 +17,53 @@ A Tampermonkey userscript collection providing message counting functionality fo
 
 ## Architecture
 
+### Modular Architecture (v7.0+)
+
+Ultimate 版本采用模块化架构，支持功能扩展：
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                        Main Loop                             │
+│  - checkUserAndPanel() every 1.5s                           │
+│  - User detection & module notification                      │
+└─────────────────────────────────────────────────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│   Core Layer    │  │ ModuleRegistry  │  │    PanelUI      │
+│  - User mgmt    │  │  - register()   │  │  - create()     │
+│  - Theme mgmt   │  │  - toggle()     │  │  - update()     │
+│  - Storage      │  │  - isEnabled()  │  │  - Settings     │
+│  - URL utils    │  │  - notify()     │  │  - Dashboard    │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+                              │
+          ┌───────────────────┼───────────────────┐
+          ▼                   ▼                   ▼
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│ CounterModule   │  │ FoldersModule   │  │  [Future Mod]   │
+│  (enabled)      │  │  (placeholder)  │  │                 │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+```
+
+### Module Interface
+
+每个模块需实现以下接口：
+
+```javascript
+{
+  id: 'module-id',           // 唯一标识
+  name: '模块名称',           // 显示名称
+  description: '功能描述',    // 简短描述
+  icon: '📊',                // Emoji 图标
+  defaultEnabled: true,      // 默认启用状态
+
+  init(),                    // 初始化 (启用时调用)
+  destroy(),                 // 销毁 (禁用时调用)
+  onUserChange(user),        // 用户切换通知
+}
+```
+
 ### Core Counting Mechanism
 All versions share the same detection pattern:
 1. **Keydown listener** - Captures Enter key on textarea/contenteditable (with `isComposing` check for IME)
@@ -27,6 +74,7 @@ All versions share the same detection pattern:
 - `GM_setValue`/`GM_getValue` - Persistent storage per script
 - `GM_addValueChangeListener` - Multi-tab real-time sync (Simple/Standard/Ultimate)
 - Storage keys prefixed with `gemini_` (Ultimate uses per-user keys: `gemini_store_{email}`)
+- Module enabled state: `gemini_enabled_modules` (array of module IDs)
 
 ### CSP Compliance (Critical)
 Google Gemini enforces strict Content Security Policy. All DOM must be created via native APIs:

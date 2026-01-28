@@ -1,5 +1,21 @@
 # 📜 Gemini Counter Pro - Changelog
 
+### 📦 v7.x Series: Modular Architecture (模块化架构)
+
+#### **v7.0**
+
+> _2025/01/28_
+
+- **🏗️ 模块化重构 (Modular Architecture)**: 将代码重构为 Core + Module 架构，支持功能扩展。
+- **📦 模块注册系统 (Module Registry)**: 新增模块注册、启用/禁用、生命周期管理机制。
+- **🎛️ Feature Extensions 面板**: Settings 中新增"功能扩展"区域，支持开关各模块。
+- **🔌 CounterModule**: 原计数功能封装为独立模块，支持动态启用/禁用。
+- **📁 FoldersModule (占位)**: 文件夹模块框架就绪，默认禁用，待后续实现。
+- **🧩 Core 层**: 抽取共享基础设施 - 用户检测、主题系统、存储管理、URL 工具。
+- **🎨 Toggle Switch UI**: 新增滑动开关组件，用于模块启用/禁用。
+
+---
+
 ### 📦 v6.x Series: Data Visualization (数据可视化)
 
 #### **v6.6**
