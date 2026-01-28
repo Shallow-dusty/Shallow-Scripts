@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v6.3)
+// @name         Gemini Counter Ultimate (v6.5)
 // @namespace    http://tampermonkey.net/
-// @version      6.3
-// @description  终极版：历史曲线图 + 设置面板 + 每日配额 + 累计对话数 + 多窗口同步 + 主题系统
+// @version      6.5
+// @description  终极版：年度热力图 + 连胜统计 + 设置面板 + 每日配额 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -17,7 +17,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Counter Ultimate v6.3 Starting...");
+    console.log("💎 Gemini Counter Ultimate v6.5 Starting...");
 
     // --- 🎨 主题配置 ---
     const THEMES = {
@@ -85,11 +85,11 @@
     let storageListenerId = null;
 
     let state = {
-        total: 0,                  // 历史总消息数
-        totalChatsCreated: 0,      // 累计创建对话数
-        chats: {},                 // 每个对话的消息数 { chatId: count }
-        dailyCounts: {},           // 每日统计 { "YYYY-MM-DD": { messages: N, chats: N } }
-        viewMode: 'today',         // 默认显示今日 (替代原 session)
+        total: 0, // 历史总消息数
+        totalChatsCreated: 0, // 累计创建对话数
+        chats: {}, // 每个对话的消息数 { chatId: count }
+        dailyCounts: {}, // 每日统计 { "YYYY-MM-DD": { messages: N, chats: N } }
+        viewMode: 'today', // 默认显示今日 (替代原 session)
         isExpanded: false,
         resetStep: 0
     };
@@ -641,7 +641,9 @@
         row.onclick = (e) => {
             e.stopPropagation();
             if (inspectingUser !== currentUser) { inspectingUser = currentUser; loadDataForView(currentUser); }
-            state.viewMode = mode; updateUI(); renderDetailsPane();
+            state.viewMode = mode;
+            state.resetStep = 0; // 切换视图时重置确认状态
+            updateUI(); renderDetailsPane();
         };
         return row;
     }
@@ -732,26 +734,38 @@
 
     function handleReset() {
         if (inspectingUser !== currentUser) return;
+
+        // 统一的第一次确认（所有模式都需要）
+        if (state.resetStep === 0) {
+            state.resetStep = 1;
+            updateUI();
+            return;
+        }
+
         if (state.viewMode === 'today') {
+            // Today: 2次确认 (Reset Today → Sure? → 执行)
             const today = getDayKey(resetHour);
             if (state.dailyCounts[today]) {
                 state.dailyCounts[today].messages = 0;
             }
-            state.resetStep = 0;
         } else if (state.viewMode === 'chat') {
-            if (state.resetStep === 0) { state.resetStep = 1; updateUI(); return; }
+            // Chat: 2次确认 (Reset Chat → Sure? → 执行)
             const cid = getChatId();
             if (cid) state.chats[cid] = 0;
-            state.resetStep = 0;
         } else if (state.viewMode === 'total') {
-            if (state.resetStep === 0) { state.resetStep = 1; updateUI(); return; }
-            if (state.resetStep === 1) { state.resetStep = 2; updateUI(); return; }
+            // Total: 3次确认 (Clear History → Sure? → Really? → 执行)
+            if (state.resetStep === 1) {
+                state.resetStep = 2;
+                updateUI();
+                return;
+            }
             state.total = 0; state.chats = {}; state.dailyCounts = {}; state.totalChatsCreated = 0;
-            state.resetStep = 0;
         }
+
+        state.resetStep = 0;
         saveCurrentUserData();
         updateUI();
-        renderDetailsPane();
+        if (state.isExpanded) renderDetailsPane();
     }
 
     function attemptIncrement() {
@@ -938,10 +952,9 @@
 
     // --- 🔄 窗口聚焦自动同步 ---
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && currentUser && currentUser !== TEMP_USER) {
-            // 用户切回此标签页，主动拉取最新数据
-            console.log("💎 Tab active, fetching latest data...");
-            loadDataForView(inspectingUser || currentUser);
+        if (document.visibilityState === 'visible' && inspectingUser) {
+            // 用户切回此标签页，刷新当前正在查看的用户数据（保持用户选择）
+            loadDataForView(inspectingUser);
         }
     });
 
@@ -1139,7 +1152,7 @@
         // Version
         const version = document.createElement('div');
         version.className = 'settings-version';
-        version.textContent = 'Gemini Counter Ultimate v6.0';
+        version.textContent = 'Gemini Counter Ultimate v6.5';
         body.appendChild(version);
 
         modal.appendChild(header);
