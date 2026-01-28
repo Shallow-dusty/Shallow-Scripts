@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v6.5)
+// @name         Gemini Counter Ultimate (v6.6)
 // @namespace    http://tampermonkey.net/
-// @version      6.5
-// @description  终极版：年度热力图 + 连胜统计 + 设置面板 + 每日配额 + 多窗口同步 + 主题系统
+// @version      6.6
+// @description  终极版：年度热力图 + 连胜统计 + 设置面板 + 每日配额 + 模型检测 + 配额进度条 + 多窗口同步 + 主题系统
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -17,22 +17,23 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Counter Ultimate v6.5 Starting...");
+    console.log("💎 Gemini Counter Ultimate v6.6 Starting...");
 
-    // --- 🎨 主题配置 ---
+    // --- 🎨 主题配置 (v6.6: Glass 2.0 + Paper Fix) ---
     const THEMES = {
         glass: {
             name: "🌌 Glass",
             vars: {
-                '--bg': 'rgba(32, 33, 36, 0.95)',
-                '--blur': '12px',
-                '--border': 'rgba(255, 255, 255, 0.1)',
+                '--bg': 'rgba(32, 33, 36, 0.85)',
+                '--blur': '18px',
+                '--saturate': '180%',
+                '--border': 'rgba(255, 255, 255, 0.12)',
                 '--text-main': '#a8c7fa',
                 '--text-sub': '#9aa0a6',
                 '--accent': '#8ab4f8',
-                '--btn-bg': 'rgba(255, 255, 255, 0.05)',
-                '--row-hover': 'rgba(255, 255, 255, 0.05)',
-                '--shadow': '0 8px 32px 0 rgba(0, 0, 0, 0.4)'
+                '--btn-bg': 'rgba(255, 255, 255, 0.06)',
+                '--row-hover': 'rgba(255, 255, 255, 0.08)',
+                '--shadow': '0 8px 32px 0 rgba(0, 0, 0, 0.37)'
             }
         },
         cyber: {
@@ -40,6 +41,7 @@
             vars: {
                 '--bg': 'rgba(10, 10, 10, 0.98)',
                 '--blur': '0px',
+                '--saturate': '100%',
                 '--border': '#00ff41',
                 '--text-main': '#00ff41',
                 '--text-sub': '#008F11',
@@ -52,15 +54,16 @@
         paper: {
             name: "📄 Paper",
             vars: {
-                '--bg': 'rgba(255, 255, 255, 0.95)',
-                '--blur': '8px',
-                '--border': '#dadce0',
-                '--text-main': '#1a73e8',
+                '--bg': 'rgba(250, 250, 250, 0.88)',
+                '--blur': '12px',
+                '--saturate': '120%',
+                '--border': 'rgba(0, 0, 0, 0.08)',
+                '--text-main': '#1967d2',
                 '--text-sub': '#5f6368',
-                '--accent': '#1a73e8',
-                '--btn-bg': '#f1f3f4',
-                '--row-hover': '#f8f9fa',
-                '--shadow': '0 4px 12px rgba(60, 64, 67, 0.15)'
+                '--accent': '#1967d2',
+                '--btn-bg': 'rgba(0, 0, 0, 0.04)',
+                '--row-hover': 'rgba(0, 0, 0, 0.06)',
+                '--shadow': '0 4px 16px rgba(60, 64, 67, 0.12)'
             }
         }
     };
@@ -70,19 +73,36 @@
         POS: 'gemini_panel_pos',
         REGISTRY: 'gemini_user_registry',
         THEME: 'gemini_current_theme',
-        RESET_HOUR: 'gemini_reset_hour'
+        RESET_HOUR: 'gemini_reset_hour',
+        QUOTA: 'gemini_quota_limit'
     };
     const PANEL_ID = 'gemini-monitor-panel-v55';
     const COOLDOWN = 1000;
-    const DEFAULT_POS = { top: 'auto', left: 'auto', bottom: '85px', right: '30px' };
+    const DEFAULT_POS = { top: '20px', left: 'auto', bottom: 'auto', right: '220px' };
     const TEMP_USER = "Guest";
+
+    // --- 🤖 模型配额系统 ---
+    const MODEL_CONFIG = {
+        flash: { label: 'Flash', multiplier: 0, color: '#34a853' },
+        thinking: { label: 'Thinking', multiplier: 0.33, color: '#fbbc04' },
+        pro: { label: 'Pro', multiplier: 1, color: '#ea4335' }
+    };
+    const MODEL_DETECT_MAP = {
+        '快速': 'flash', 'Flash': 'flash', 'flash': 'flash',
+        '思考': 'thinking', 'Thinking': 'thinking', 'thinking': 'thinking',
+        'Pro': 'pro', 'pro': 'pro'
+    };
 
     // --- 📊 状态 ---
     let currentUser = TEMP_USER;
     let inspectingUser = TEMP_USER;
     let currentTheme = GM_getValue(GLOBAL_KEYS.THEME, 'glass');
-    let resetHour = GM_getValue(GLOBAL_KEYS.RESET_HOUR, 0); // 默认凌晨0点重置
+    let resetHour = GM_getValue(GLOBAL_KEYS.RESET_HOUR, 0);
+    let quotaLimit = GM_getValue(GLOBAL_KEYS.QUOTA, 50);
     let storageListenerId = null;
+    let currentModel = 'flash';     // flash | thinking | pro
+    let accountType = 'free';       // free | pro | ultra
+    let lastDisplayedVal = -1;      // 用于触发 bump 动画
 
     let state = {
         total: 0, // 历史总消息数
@@ -161,6 +181,54 @@
             }
         } catch (e) { }
         return null;
+    }
+
+    // --- 🤖 模型与账户检测 (v6.6) ---
+    function detectModel() {
+        try {
+            // 方法1: 读取当前模式按钮文本 (bard-mode-switcher > button.input-area-switch)
+            const modeBtn = document.querySelector('button.input-area-switch');
+            if (modeBtn) {
+                const text = modeBtn.textContent.trim();
+                const key = MODEL_DETECT_MAP[text];
+                if (key) return key;
+            }
+            // 方法2: 读取已选中的菜单项
+            const selected = document.querySelector('.bard-mode-list-button.is-selected');
+            if (selected) {
+                const text = selected.textContent.trim().split(/\s/)[0];
+                const key = MODEL_DETECT_MAP[text];
+                if (key) return key;
+            }
+        } catch (e) { }
+        return currentModel; // 保持上次检测值
+    }
+
+    function detectAccountType() {
+        try {
+            // 方法1: 查找右上角的 Pro/Ultra 药丸徽章按钮
+            const pillboxBtn = document.querySelector('button.gds-pillbox-button, button.pillbox-btn');
+            if (pillboxBtn) {
+                const text = pillboxBtn.textContent.trim().toUpperCase();
+                if (text === 'ULTRA' || text.includes('ULTRA')) return 'ultra';
+                if (text === 'PRO' || text.includes('PRO')) return 'pro';
+            }
+            // 方法2: 检查是否登录（有用户头像）
+            const userAvatar = document.querySelector('a[aria-label*="@"], img[aria-label*="@"]');
+            if (userAvatar) {
+                return 'free'; // 已登录但没有 Pro/Ultra 徽章 = Free
+            }
+            // 未登录
+            return 'free';
+        } catch (e) { }
+        return accountType;
+    }
+
+    function getQuotaUsed() {
+        // 根据 dailyCounts 中的模型使用量计算等效 Pro 消息数
+        // 简化版：用今日消息数 × 当前模型的 multiplier 估算
+        // 精确版需要逐条记录每次使用的模型，这里先用简化方案
+        return getTodayMessages();
     }
 
     function setupStorageListener(targetUser) {
@@ -292,15 +360,18 @@
         GM_addStyle(`
             #${PANEL_ID} {
                 --bg: #202124; --text-main: #fff; --text-sub: #ccc; --accent: #8ab4f8;
+                --blur: 18px; --saturate: 180%;
                 position: fixed; z-index: 2147483647; width: 170px;
                 background: var(--bg);
-                backdrop-filter: blur(var(--blur)); -webkit-backdrop-filter: blur(var(--blur));
+                backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
+                -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
                 border: 1px solid var(--border); border-radius: 16px;
                 box-shadow: var(--shadow);
                 font-family: 'Google Sans', Roboto, sans-serif;
                 overflow: hidden; user-select: none;
                 display: flex; flex-direction: column;
-                transition: height 0.3s, background 0.3s;
+                transition: height 0.35s cubic-bezier(0.4, 0, 0.2, 1),
+                            background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
             }
             .gemini-header {
                 padding: 8px 14px; cursor: grab;
@@ -313,23 +384,66 @@
                 font-size: 10px; color: var(--text-sub);
                 background: rgba(255,255,255,0.05);
                 padding: 2px 8px; border-radius: 12px; border: 1px solid transparent;
+                max-width: 120px; overflow: hidden;
             }
             .user-capsule.viewing-other { border-color: #fdbd00; color: #fdbd00; }
-            .user-avatar-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-            .gemini-toggle-btn { cursor: pointer; font-size: 14px; opacity: 0.6; color: var(--text-sub); }
+            .user-avatar-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
+            .gemini-toggle-btn { cursor: pointer; font-size: 14px; opacity: 0.6; color: var(--text-sub);
+                transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
             .gemini-toggle-btn:hover { opacity: 1; color: var(--accent); }
-            .gemini-main-view { padding: 16px 14px; text-align: center; }
+            .gemini-main-view { padding: 12px 14px 14px; text-align: center; }
             .gemini-big-num {
                 font-size: 40px; font-weight: 400; color: var(--text-main); line-height: 1;
-                margin-bottom: 6px; text-shadow: 0 0 20px rgba(128, 128, 128, 0.1);
+                margin-bottom: 4px; text-shadow: 0 0 20px rgba(128, 128, 128, 0.1);
+                transition: transform 0.15s cubic-bezier(0.4, 0, 0.2, 1);
             }
+            .gemini-big-num.bump {
+                animation: numBump 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+            }
+            @keyframes numBump {
+                0%   { transform: scale(1); }
+                40%  { transform: scale(1.15); }
+                100% { transform: scale(1); }
+            }
+
+            /* --- 模型 & 配额 (v6.6) --- */
+            .gemini-model-row {
+                display: flex; align-items: center; justify-content: center; gap: 6px;
+                margin-bottom: 6px;
+            }
+            .model-badge {
+                font-size: 9px; font-weight: 600; letter-spacing: 0.5px;
+                padding: 1px 6px; border-radius: 4px;
+                line-height: 1.4;
+            }
+            .account-badge {
+                font-size: 8px; font-weight: 500; letter-spacing: 0.3px;
+                padding: 1px 5px; border-radius: 3px;
+                opacity: 0.7;
+            }
+            .quota-bar-wrap {
+                margin: 6px 0 8px; height: 4px; border-radius: 2px;
+                background: var(--btn-bg); overflow: hidden;
+                position: relative;
+            }
+            .quota-bar-fill {
+                height: 100%; border-radius: 2px;
+                transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1),
+                            background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            }
+            .quota-label {
+                font-size: 9px; color: var(--text-sub); opacity: 0.6;
+                margin-bottom: 8px; font-family: monospace;
+            }
+
             .gemini-sub-info {
-                font-size: 10px; color: var(--text-sub); margin-bottom: 12px;
+                font-size: 10px; color: var(--text-sub); margin-bottom: 8px;
                 font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
             }
             .gemini-details-view {
                 height: 0; opacity: 0; overflow: hidden; background: rgba(0,0,0,0.1);
-                padding: 0 12px; transition: all 0.3s ease;
+                padding: 0 12px;
+                transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
             }
             .gemini-details-view.expanded { height: auto; opacity: 1; padding: 10px 12px 14px 12px; border-top: 1px solid var(--border); }
             .section-title {
@@ -339,7 +453,8 @@
             .detail-row {
                 display: flex; justify-content: space-between; align-items: center;
                 margin-bottom: 4px; font-size: 11px; color: var(--text-sub); cursor: pointer;
-                padding: 5px 8px; border-radius: 6px; transition: background 0.2s;
+                padding: 5px 8px; border-radius: 6px;
+                transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1);
             }
             .detail-row:hover { background: var(--row-hover); color: var(--text-main); }
             .detail-row.active-mode { background: rgba(138, 180, 248, 0.15); color: var(--accent); font-weight: 500; }
@@ -349,7 +464,7 @@
             .g-btn {
                 background: var(--btn-bg); border: 1px solid transparent;
                 color: var(--text-sub); border-radius: 6px; padding: 6px 0; font-size: 11px;
-                cursor: pointer; transition: all 0.2s; width: 100%;
+                cursor: pointer; transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1); width: 100%;
             }
             .g-btn:hover { background: var(--row-hover); color: var(--text-main); }
             .g-btn.danger-1 { color: #f28b82; border-color: #f28b82; }
@@ -506,10 +621,39 @@
             bigDisplay.className = 'gemini-big-num';
             bigDisplay.textContent = '0';
 
+            // Model & Account badges (v6.6)
+            const modelRow = document.createElement('div');
+            modelRow.id = 'g-model-row';
+            modelRow.className = 'gemini-model-row';
+
+            const modelBadge = document.createElement('span');
+            modelBadge.id = 'g-model-badge';
+            modelBadge.className = 'model-badge';
+
+            const acctBadge = document.createElement('span');
+            acctBadge.id = 'g-acct-badge';
+            acctBadge.className = 'account-badge';
+
+            modelRow.appendChild(modelBadge);
+            modelRow.appendChild(acctBadge);
+
             const subInfo = document.createElement('div');
             subInfo.id = 'g-sub-info';
             subInfo.className = 'gemini-sub-info';
             subInfo.textContent = 'Today';
+
+            // Quota bar (v6.6)
+            const quotaWrap = document.createElement('div');
+            quotaWrap.id = 'g-quota-wrap';
+            quotaWrap.className = 'quota-bar-wrap';
+            const quotaFill = document.createElement('div');
+            quotaFill.id = 'g-quota-fill';
+            quotaFill.className = 'quota-bar-fill';
+            quotaWrap.appendChild(quotaFill);
+
+            const quotaLabel = document.createElement('div');
+            quotaLabel.id = 'g-quota-label';
+            quotaLabel.className = 'quota-label';
 
             const actionBtn = document.createElement('button');
             actionBtn.id = 'g-action-btn';
@@ -519,7 +663,10 @@
             actionBtn.onmousedown = (e) => e.stopPropagation();
 
             mainView.appendChild(bigDisplay);
+            mainView.appendChild(modelRow);
             mainView.appendChild(subInfo);
+            mainView.appendChild(quotaWrap);
+            mainView.appendChild(quotaLabel);
             mainView.appendChild(actionBtn);
 
             const details = document.createElement('div');
@@ -659,17 +806,24 @@
         const subInfo = document.getElementById('g-sub-info');
         const actionBtn = document.getElementById('g-action-btn');
         const capsule = document.getElementById('g-user-capsule');
+        const modelBadge = document.getElementById('g-model-badge');
+        const acctBadge = document.getElementById('g-acct-badge');
+        const quotaFill = document.getElementById('g-quota-fill');
+        const quotaLabel = document.getElementById('g-quota-label');
         if (!bigDisplay) return;
 
         // Capsule
         const isMe = inspectingUser === currentUser;
         const displayName = inspectingUser === TEMP_USER ? 'Guest' : inspectingUser.split('@')[0];
 
-        capsule.replaceChildren(); 
+        capsule.replaceChildren();
         const dot = document.createElement('div');
         dot.className = 'user-avatar-dot';
         const name = document.createElement('span');
         name.textContent = displayName;
+        name.style.overflow = 'hidden';
+        name.style.textOverflow = 'ellipsis';
+        name.style.whiteSpace = 'nowrap';
         capsule.appendChild(dot);
         capsule.appendChild(name);
 
@@ -679,6 +833,22 @@
         } else {
             capsule.classList.remove('viewing-other');
             capsule.title = "Active User";
+        }
+
+        // Model & Account badges (v6.6)
+        if (modelBadge) {
+            const mc = MODEL_CONFIG[currentModel];
+            modelBadge.textContent = mc.label;
+            modelBadge.style.background = mc.color;
+            modelBadge.style.color = currentModel === 'flash' ? '#000' : '#fff';
+        }
+        if (acctBadge) {
+            const acctLabels = { free: 'Free', pro: 'Pro', ultra: 'Ultra' };
+            const acctColors = { free: 'var(--btn-bg)', pro: 'rgba(138,180,248,0.25)', ultra: 'rgba(251,188,4,0.25)' };
+            const acctTextColors = { free: 'var(--text-sub)', pro: '#8ab4f8', ultra: '#fbbc04' };
+            acctBadge.textContent = acctLabels[accountType];
+            acctBadge.style.background = acctColors[accountType];
+            acctBadge.style.color = acctTextColors[accountType];
         }
 
         let val = 0, sub = "", btn = "Reset";
@@ -696,10 +866,8 @@
                 const cid = getChatId();
                 const count = cid ? (state.chats[cid] || 0) : 0;
                 val = count;
-                // Debug info in title
                 sub = cid ? `ID: ${cid.slice(0, 8)}...` : 'ID: New Chat';
                 if (cid && count === 0 && state.total > 0) {
-                     // 异常情况 Debug：有总数但当前对话为0？
                      console.warn(`💎 ID Mismatch Debug: URL_ID=${cid}, State_Keys=${Object.keys(state.chats).slice(-3)}`);
                 }
                 btn = "Reset Chat";
@@ -708,13 +876,34 @@
             val = state.totalChatsCreated;
             sub = "Chats Created";
             btn = "View Only";
-            disableBtn = true; // 历史累计，不可重置
+            disableBtn = true;
         } else if (state.viewMode === 'total') {
             val = state.total; sub = "Lifetime History"; btn = "Clear History";
         }
 
+        // Bump animation on value change
+        const numericVal = typeof val === 'number' ? val : -1;
+        if (numericVal !== lastDisplayedVal && lastDisplayedVal !== -1 && numericVal > lastDisplayedVal) {
+            bigDisplay.classList.remove('bump');
+            void bigDisplay.offsetWidth; // reflow trigger
+            bigDisplay.classList.add('bump');
+        }
+        lastDisplayedVal = numericVal;
+
         bigDisplay.textContent = val;
         subInfo.textContent = sub;
+
+        // Quota bar (v6.6)
+        if (quotaFill && quotaLabel) {
+            const used = getQuotaUsed();
+            const pct = Math.min((used / quotaLimit) * 100, 100);
+            quotaFill.style.width = pct + '%';
+            // Color: green → yellow → red
+            if (pct < 60) quotaFill.style.background = '#34a853';
+            else if (pct < 85) quotaFill.style.background = '#fbbc04';
+            else quotaFill.style.background = '#ea4335';
+            quotaLabel.textContent = `${used} / ${quotaLimit} msgs`;
+        }
 
         if (disableBtn) {
             actionBtn.textContent = "View Only";
@@ -835,7 +1024,7 @@
     function checkUserAndPanel() {
         const detected = detectUser();
         if (detected && detected !== currentUser) {
-            
+
             // 💾 状态合并策略：从 Guest 切换到正式用户时，保留 Guest 期间产生的计数
             let guestState = null;
             if (currentUser === TEMP_USER) {
@@ -844,7 +1033,7 @@
 
             currentUser = detected;
             registerUser(detected);
-            
+
             if (inspectingUser === TEMP_USER || inspectingUser === currentUser) {
                 inspectingUser = currentUser;
             }
@@ -852,11 +1041,8 @@
 
             // 执行合并
             if (guestState && (guestState.total > 0 || Object.keys(guestState.chats).length > 0)) {
-                // 1. Merge Total
                 state.total += guestState.total;
                 state.totalChatsCreated += guestState.totalChatsCreated;
-                
-                // 2. Merge Daily
                 for (const [day, counts] of Object.entries(guestState.dailyCounts)) {
                     if (!state.dailyCounts[day]) {
                         state.dailyCounts[day] = counts;
@@ -865,19 +1051,24 @@
                         state.dailyCounts[day].chats += counts.chats;
                     }
                 }
-                
-                // 3. Merge Chats
                 for (const [cid, count] of Object.entries(guestState.chats)) {
                     state.chats[cid] = (state.chats[cid] || 0) + count;
                 }
-                
                 console.log(`💎 Merged ${guestState.total} messages from Guest session to ${currentUser}`);
                 saveCurrentUserData();
-                updateUI();
-                if (state.isExpanded) renderDetailsPane();
             }
         }
+
+        // v6.6: 模型 & 账户检测 (每次轮询都刷新)
+        const newModel = detectModel();
+        const newAcct = detectAccountType();
+        const modelChanged = newModel !== currentModel;
+        const acctChanged = newAcct !== accountType;
+        currentModel = newModel;
+        accountType = newAcct;
+
         if (!document.getElementById(PANEL_ID)) createPanel();
+        else if (modelChanged || acctChanged) updateUI();
     }
 
     // 🔥 Adaptive Viewport Check
@@ -891,18 +1082,15 @@
             // Only warn if it's really out of bounds (ignoring 'auto')
             if (pos.left !== 'auto' && pos.top !== 'auto') {
                 console.warn(`💎 Panel off-screen detected (Pos: ${pos.left}, ${pos.top} | Win: ${winW}x${winH}). Resetting.`);
-                el.style.top = 'auto';
-                el.style.left = 'auto';
-                el.style.bottom = DEFAULT_POS.bottom;
-                el.style.right = DEFAULT_POS.right;
+                pos = DEFAULT_POS;
                 GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
             }
-        } else {
-            if (pos.top !== 'auto') el.style.top = pos.top;
-            if (pos.left !== 'auto') el.style.left = pos.left;
-            if (pos.bottom !== 'auto') el.style.bottom = pos.bottom;
-            if (pos.right !== 'auto') el.style.right = pos.right;
         }
+        // 显式设置所有四个位置属性，确保无残留
+        el.style.top = pos.top;
+        el.style.left = pos.left;
+        el.style.bottom = pos.bottom;
+        el.style.right = pos.right;
     }
 
     injectStyles();
@@ -1020,6 +1208,40 @@
         resetRow.appendChild(resetSelect);
         resetSection.appendChild(resetRow);
         body.appendChild(resetSection);
+
+        // Section: Quota (v6.6)
+        const quotaSection = document.createElement('div');
+        quotaSection.className = 'settings-section';
+        const quotaTitle = document.createElement('div');
+        quotaTitle.className = 'settings-section-title';
+        quotaTitle.textContent = 'Daily Quota';
+        quotaSection.appendChild(quotaTitle);
+
+        const quotaRow = document.createElement('div');
+        quotaRow.className = 'settings-row';
+        const quotaLabelEl = document.createElement('span');
+        quotaLabelEl.className = 'settings-label';
+        quotaLabelEl.textContent = 'Message Limit';
+        const quotaInput = document.createElement('input');
+        quotaInput.type = 'number';
+        quotaInput.min = '1';
+        quotaInput.max = '999';
+        quotaInput.value = quotaLimit;
+        quotaInput.className = 'settings-select';
+        quotaInput.style.width = '60px';
+        quotaInput.style.textAlign = 'center';
+        quotaInput.onchange = () => {
+            const v = parseInt(quotaInput.value, 10);
+            if (v > 0 && v <= 999) {
+                quotaLimit = v;
+                GM_setValue(GLOBAL_KEYS.QUOTA, v);
+                updateUI();
+            }
+        };
+        quotaRow.appendChild(quotaLabelEl);
+        quotaRow.appendChild(quotaInput);
+        quotaSection.appendChild(quotaRow);
+        body.appendChild(quotaSection);
 
         // Section: Usage History Chart
         const chartSection = document.createElement('div');
@@ -1152,7 +1374,7 @@
         // Version
         const version = document.createElement('div');
         version.className = 'settings-version';
-        version.textContent = 'Gemini Counter Ultimate v6.5';
+        version.textContent = 'Gemini Counter Ultimate v6.6';
         body.appendChild(version);
 
         modal.appendChild(header);
@@ -1166,7 +1388,6 @@
         if (modal) modal.remove();
     }
 
-    // --- 📊 Dashboard Modal ---
     // --- 📊 Dashboard Modal ---
     function openDashboard() {
         const exist = document.getElementById('gemini-dashboard-overlay');

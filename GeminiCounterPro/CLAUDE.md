@@ -42,6 +42,12 @@ Extracts Google account email from DOM elements (`img[alt*="@"]`, `button[aria-l
 - Uses `dailyCounts[YYYY-MM-DD]` structure
 - `getDayKey(resetHour)` calculates current "day" respecting custom reset time
 
+### Model & Account Detection (Ultimate v6.6+)
+- **Model Detection**: Reads current model from `button.input-area-switch` text (快速/思考/Pro → flash/thinking/pro)
+- **Account Type**: Detects Pro/Ultra badge via `button.gds-pillbox-button` or `button.pillbox-btn`
+- **Quota System**: Configurable daily message limit with visual progress bar
+- **Model Multipliers**: Flash (0x), Thinking (0.33x), Pro (1x) - currently simplified to raw count
+
 ## Testing
 
 No automated tests. Manual testing required:

@@ -44,4 +44,22 @@
 
 Script Weaver
 
+---
+
+## 🗺️ Roadmap (开发计划)
+
+### UI/UX 优化
+- [ ] **Paper 主题视觉优化**: 当前仍存在轻微视觉污染，需要进一步调整对比度和色彩平衡
+- [ ] **更多主题策略**: 借助 UI/UX 设计原则，扩展主题系统 (深色 OLED、高对比度无障碍、自定义色板等)
+
+### 功能扩展
+- [ ] **消息搜索功能**: 支持在历史对话中搜索关键词
+  - 参考: [AI Chat Window Enhancer Pro](https://greasyfork.org/zh-CN/scripts/517672-ai-chat-window-enhancer-pro)
+- [ ] **文件夹/分类功能**: 支持将对话整理到自定义文件夹中，便于管理大量对话
+  - 参考: [Reddit 讨论](https://www.reddit.com/r/GeminiAI/comments/1qob7is/)
+
+### 数据增强
+- [ ] **精确配额追踪**: 根据模型 multiplier 计算实际配额消耗 (Flash: 0x, Thinking: 0.33x, Pro: 1x)
+- [ ] **导出格式扩展**: 支持 CSV、Markdown 等更多导出格式
+
 
