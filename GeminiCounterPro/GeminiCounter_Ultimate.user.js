@@ -1211,10 +1211,15 @@
                     chatRow.appendChild(chatTitle);
                     chatRow.appendChild(removeBtn);
 
-                    // Click to navigate
+                    // Click to navigate (use sidebar link for SPA navigation)
                     chatRow.onclick = (e) => {
                         e.stopPropagation();
-                        window.location.href = chat.href;
+                        // 尝试使用侧边栏原有链接进行 SPA 导航
+                        if (chat.element && chat.element.click) {
+                            chat.element.click();
+                        } else {
+                            window.location.href = chat.href;
+                        }
                     };
 
                     wrapper.appendChild(chatRow);
@@ -2066,9 +2071,9 @@
                 toggle.onclick = () => {
                     ModuleRegistry.toggle(mod.id);
                     toggle.classList.toggle('on');
-                    // 部分模块需要刷新页面
-                    if (mod.id === 'folders') {
-                        // TODO: 动态启用/禁用文件夹功能
+                    // 刷新详情面板以显示/隐藏 Folders 区域
+                    if (mod.id === 'folders' && CounterModule.state.isExpanded) {
+                        PanelUI.renderDetailsPane();
                     }
                 };
 
