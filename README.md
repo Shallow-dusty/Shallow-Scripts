@@ -6,7 +6,7 @@
 
 | 项目名称 | 简介 | 版本 |
 | :--- | :--- | :--- |
-| **[Gemini Counter Pro](./GeminiCounterPro)** | Google Gemini 的终极计数器增强工具。提供 Lite/Simple/Standard/Ultimate 四种版本，支持会话统计、多窗口同步、历史记录归档等强大功能。 | v5.3 |
+| **[Gemini Counter Pro](./GeminiCounterPro)** | Google Gemini 的终极计数器增强工具。提供 Lite/Simple/Standard/Ultimate 四种版本，支持每日统计、多窗口同步、历史记录归档等强大功能。 | v7.4 |
 
 > *更多脚本持续更新中...*
 
