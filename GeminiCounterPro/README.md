@@ -1,6 +1,6 @@
 # Gemini Counter Code Archive (Gemini 计数器代码库)
 
-这是一个 Tampermonkey 油猴脚本集合，为 Google Gemini 提供精准的交互计数功能。
+这是一个 Tampermonkey 油猴脚本集合，为 Google Gemini 提供精准的交互计数功能。当前版本：**v7.4**。
 为了满足不同用户的需求，本代码库提供了 **4 个不同版本** 的脚本，你可以根据喜好选择其中一个安装。
 
 ## 📂 版本列表 (Versions)
