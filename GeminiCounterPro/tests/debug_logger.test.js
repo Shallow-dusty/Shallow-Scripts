@@ -11,6 +11,7 @@ test("logger emits, filters, and persists", async () => {
     level: "info",
     initial: [{ ts: "t0", level: "info", msg: "init", data: null }],
     store: { get: () => [], set: (v) => { persisted.length = 0; persisted.push(...v); } },
+    onLevelChange: (lvl) => { persisted.push({ level: lvl }); },
     now: (() => {
       let i = 0;
       return () => `t${++i}`;
@@ -27,6 +28,7 @@ test("logger emits, filters, and persists", async () => {
   logger.setLevel("debug");
   assert.equal(logger.getLevel(), "debug");
   logger.debug("dbg2");
+  assert.ok(persisted.some(e => e && e.level === "debug"));
 
   const entries = logger.getEntries();
   assert.ok(entries.length >= 5);

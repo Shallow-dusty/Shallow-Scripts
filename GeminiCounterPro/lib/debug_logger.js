@@ -11,6 +11,7 @@ function createLogger(options) {
     : (Array.isArray(store.get()) ? store.get() : []);
   const subscribers = new Set();
   let persistTimer = null;
+  const onLevelChange = options?.onLevelChange ?? (() => {});
   const now = options?.now ?? (() => new Date().toISOString());
   const sink = options?.sink ?? (() => {});
 
@@ -50,7 +51,7 @@ function createLogger(options) {
     info: (m, d) => log("info", m, d),
     debug: (m, d) => log("debug", m, d),
     getLevel: () => level,
-    setLevel: (lvl) => { level = lvl; log("info", "Log level updated", { level: lvl }); },
+    setLevel: (lvl) => { level = lvl; onLevelChange(lvl); log("info", "Log level updated", { level: lvl }); },
     getEntries: () => buffer.slice(),
     clear: () => { buffer = []; store.set([]); log("info", "Logs cleared"); },
     subscribe: (fn) => { subscribers.add(fn); return () => subscribers.delete(fn); },
