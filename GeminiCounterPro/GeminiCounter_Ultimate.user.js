@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.4)
+// @name         Gemini Counter Ultimate (v8.5)
 // @namespace    http://tampermonkey.net/
-// @version      8.4
+// @version      8.5
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.4 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.5 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -955,6 +955,9 @@ function filterLogs(entries, opts) {
         dragState: null,        // Chat drag state: { chatId, chatTitle }
         folderDragState: null,  // Folder reorder state: { folderId }
         uncategorizedCollapsed: false,
+        _searchQuery: '',
+        _batchMode: false,
+        _batchSelected: new Set(),
 
         // --- 生命周期 ---
         init() {
@@ -1107,6 +1110,28 @@ function filterLogs(entries, opts) {
             this.data.folderOrder = order;
             this.saveData();
             PanelUI.renderDetailsPane();
+        },
+
+        batchMoveToFolder(targetFolderId) {
+            this._batchSelected.forEach(chatId => {
+                if (targetFolderId === null) {
+                    delete this.data.chatToFolder[chatId];
+                } else {
+                    this.data.chatToFolder[chatId] = targetFolderId;
+                }
+            });
+            this._batchSelected.clear();
+            this._batchMode = false;
+            this.saveData();
+            this.markSidebarChats();
+            PanelUI.renderDetailsPane();
+        },
+
+        getFolderStats(folderId) {
+            const chatIds = Object.entries(this.data.chatToFolder)
+                .filter(([, fid]) => fid === folderId)
+                .map(([cid]) => cid);
+            return { chatCount: chatIds.length };
         },
 
         // --- 侧边栏扫描 ---
@@ -1464,6 +1489,44 @@ function filterLogs(entries, opts) {
                     background: var(--row-hover, rgba(255, 255, 255, 0.08));
                     opacity: 1;
                 }
+
+                /* Batch mode */
+                .gf-batch-bar {
+                    display: flex;
+                    align-items: center;
+                    gap: 4px;
+                    padding: 4px 8px;
+                    margin-bottom: 4px;
+                    font-size: 10px;
+                    color: var(--text-sub, #9aa0a6);
+                }
+                .gf-batch-bar button {
+                    font-size: 9px;
+                    padding: 2px 6px;
+                    border-radius: 4px;
+                    border: 1px solid var(--divider, rgba(255,255,255,0.1));
+                    background: var(--btn-bg, rgba(255,255,255,0.05));
+                    color: var(--text-sub, #9aa0a6);
+                    cursor: pointer;
+                }
+                .gf-batch-bar button:hover {
+                    color: var(--text-main, #fff);
+                }
+                .gf-chat-row.batch-selected {
+                    background: rgba(138, 180, 248, 0.15);
+                }
+                .gf-batch-check {
+                    width: 12px; height: 12px;
+                    border: 1px solid var(--text-sub, #9aa0a6);
+                    border-radius: 3px;
+                    margin-right: 6px;
+                    flex-shrink: 0;
+                    cursor: pointer;
+                }
+                .gf-batch-check.checked {
+                    background: var(--accent, #8ab4f8);
+                    border-color: var(--accent, #8ab4f8);
+                }
             `);
         },
 
@@ -1472,8 +1535,45 @@ function filterLogs(entries, opts) {
             // Section Title
             const title = document.createElement('div');
             title.className = 'section-title';
-            title.textContent = 'Folders';
+            title.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
+            const titleText = document.createElement('span');
+            titleText.textContent = 'Folders';
+            const batchToggle = document.createElement('span');
+            batchToggle.style.cssText = 'font-size: 9px; cursor: pointer; opacity: 0.6;';
+            batchToggle.textContent = this._batchMode ? '✕ Cancel' : '☑ Select';
+            batchToggle.onclick = (e) => {
+                e.stopPropagation();
+                this._batchMode = !this._batchMode;
+                this._batchSelected.clear();
+                PanelUI.renderDetailsPane();
+            };
+            title.appendChild(titleText);
+            title.appendChild(batchToggle);
             container.appendChild(title);
+
+            // Batch action bar
+            if (this._batchMode && this._batchSelected.size > 0) {
+                const batchBar = document.createElement('div');
+                batchBar.className = 'gf-batch-bar';
+                const countLabel = document.createElement('span');
+                countLabel.textContent = `${this._batchSelected.size} selected`;
+                batchBar.appendChild(countLabel);
+
+                // Move to folder buttons
+                this.data.folderOrder.forEach(fid => {
+                    const f = this.data.folders[fid];
+                    if (!f) return;
+                    const btn = document.createElement('button');
+                    btn.textContent = `→ ${f.name}`;
+                    btn.onclick = () => this.batchMoveToFolder(fid);
+                    batchBar.appendChild(btn);
+                });
+                const unassignBtn = document.createElement('button');
+                unassignBtn.textContent = '→ None';
+                unassignBtn.onclick = () => this.batchMoveToFolder(null);
+                batchBar.appendChild(unassignBtn);
+                container.appendChild(batchBar);
+            }
 
             // Search bar
             const searchWrap = document.createElement('div');
@@ -1566,18 +1666,36 @@ function filterLogs(entries, opts) {
                 if (!this.uncategorizedCollapsed) {
                     uncategorized.forEach(chat => {
                         const chatRow = document.createElement('div');
-                        chatRow.className = 'gf-chat-row';
-                        chatRow.setAttribute('draggable', 'true');
-                        chatRow.ondragstart = (e) => {
-                            this.dragState = { chatId: chat.id, chatTitle: chat.title };
-                            e.dataTransfer.effectAllowed = 'move';
-                            e.dataTransfer.setData('text/plain', chat.id);
-                            chatRow.style.opacity = '0.5';
-                        };
-                        chatRow.ondragend = () => {
-                            chatRow.style.opacity = '';
-                            this.dragState = null;
-                        };
+                        chatRow.className = 'gf-chat-row' + (this._batchSelected.has(chat.id) ? ' batch-selected' : '');
+
+                        if (this._batchMode) {
+                            const check = document.createElement('div');
+                            check.className = 'gf-batch-check' + (this._batchSelected.has(chat.id) ? ' checked' : '');
+                            check.onclick = (e) => {
+                                e.stopPropagation();
+                                if (this._batchSelected.has(chat.id)) {
+                                    this._batchSelected.delete(chat.id);
+                                } else {
+                                    this._batchSelected.add(chat.id);
+                                }
+                                PanelUI.renderDetailsPane();
+                            };
+                            chatRow.appendChild(check);
+                        }
+
+                        if (!this._batchMode) {
+                            chatRow.setAttribute('draggable', 'true');
+                            chatRow.ondragstart = (e) => {
+                                this.dragState = { chatId: chat.id, chatTitle: chat.title };
+                                e.dataTransfer.effectAllowed = 'move';
+                                e.dataTransfer.setData('text/plain', chat.id);
+                                chatRow.style.opacity = '0.5';
+                            };
+                            chatRow.ondragend = () => {
+                                chatRow.style.opacity = '';
+                                this.dragState = null;
+                            };
+                        }
 
                         const chatTitle = document.createElement('span');
                         chatTitle.className = 'gf-chat-title';
@@ -1587,6 +1705,15 @@ function filterLogs(entries, opts) {
 
                         chatRow.onclick = (e) => {
                             e.stopPropagation();
+                            if (this._batchMode) {
+                                if (this._batchSelected.has(chat.id)) {
+                                    this._batchSelected.delete(chat.id);
+                                } else {
+                                    this._batchSelected.add(chat.id);
+                                }
+                                PanelUI.renderDetailsPane();
+                                return;
+                            }
                             if (chat.element && chat.element.click) {
                                 chat.element.click();
                             } else {
@@ -1647,10 +1774,12 @@ function filterLogs(entries, opts) {
             label.className = 'gf-folder-label';
             label.textContent = (folder.pinned ? '📌 ' : '') + folder.name;
 
-            // Count badge
+            // Count badge with stats tooltip
+            const stats = this.getFolderStats(folderId);
             const badge = document.createElement('span');
             badge.className = 'gf-folder-badge';
             badge.textContent = chats.length > 0 ? `(${chats.length})` : '';
+            badge.title = `Total assigned: ${stats.chatCount} | Visible: ${chats.length}`;
 
             // Toggle arrow
             const toggle = document.createElement('span');
@@ -1747,7 +1876,22 @@ function filterLogs(entries, opts) {
             if (!folder.collapsed && chats.length > 0) {
                 chats.forEach(chat => {
                     const chatRow = document.createElement('div');
-                    chatRow.className = 'gf-chat-row';
+                    chatRow.className = 'gf-chat-row' + (this._batchSelected.has(chat.id) ? ' batch-selected' : '');
+
+                    if (this._batchMode) {
+                        const check = document.createElement('div');
+                        check.className = 'gf-batch-check' + (this._batchSelected.has(chat.id) ? ' checked' : '');
+                        check.onclick = (e) => {
+                            e.stopPropagation();
+                            if (this._batchSelected.has(chat.id)) {
+                                this._batchSelected.delete(chat.id);
+                            } else {
+                                this._batchSelected.add(chat.id);
+                            }
+                            PanelUI.renderDetailsPane();
+                        };
+                        chatRow.appendChild(check);
+                    }
 
                     const chatTitle = document.createElement('span');
                     chatTitle.className = 'gf-chat-title';
@@ -1764,12 +1908,20 @@ function filterLogs(entries, opts) {
                     };
 
                     chatRow.appendChild(chatTitle);
-                    chatRow.appendChild(removeBtn);
+                    if (!this._batchMode) chatRow.appendChild(removeBtn);
 
-                    // Click to navigate (use sidebar link for SPA navigation)
+                    // Click to navigate or select in batch mode
                     chatRow.onclick = (e) => {
                         e.stopPropagation();
-                        // 尝试使用侧边栏原有链接进行 SPA 导航
+                        if (this._batchMode) {
+                            if (this._batchSelected.has(chat.id)) {
+                                this._batchSelected.delete(chat.id);
+                            } else {
+                                this._batchSelected.add(chat.id);
+                            }
+                            PanelUI.renderDetailsPane();
+                            return;
+                        }
                         if (chat.element && chat.element.click) {
                             chat.element.click();
                         } else {
@@ -3006,7 +3158,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.4 (Modular)';
+            version.textContent = 'Gemini Assistant v8.5 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
