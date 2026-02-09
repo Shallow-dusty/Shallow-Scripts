@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.9)
+// @name         Gemini Counter Ultimate (v8.10)
 // @namespace    http://tampermonkey.net/
-// @version      8.9
+// @version      8.10
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.9 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.10 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -2543,6 +2543,254 @@ function filterLogs(entries, opts) {
     ModuleRegistry.register(DefaultModelModule);
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║                    BATCH DELETE MODULE (批量删除模块)                        ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
+
+    const BatchDeleteModule = {
+        id: 'batch-delete',
+        name: '批量删除',
+        description: '在面板中批量选择并删除对话',
+        icon: '🗑️',
+        defaultEnabled: false,
+
+        _selected: new Set(),
+        _deleting: false,
+        _progress: { current: 0, total: 0 },
+
+        init() {
+            this._selected = new Set();
+            Logger.info('BatchDeleteModule initialized');
+        },
+
+        destroy() {
+            this._selected.clear();
+            this._deleting = false;
+        },
+
+        onUserChange() {
+            this._selected.clear();
+        },
+
+        _scanChats() {
+            const links = document.querySelectorAll('a[href*="/app/"]');
+            const items = [];
+            links.forEach(el => {
+                const href = el.getAttribute('href') || '';
+                const match = href.match(/\/app\/([a-zA-Z0-9\-_]+)/);
+                if (match) {
+                    let title = '';
+                    const textEl = el.querySelector('span, div');
+                    if (textEl) title = textEl.textContent.trim();
+                    if (!title) title = 'Untitled';
+                    items.push({ id: match[1], title, element: el, href });
+                }
+            });
+            return items;
+        },
+
+        async _deleteChat(chatElement) {
+            try {
+                // Step 1: Hover to reveal three-dot menu
+                chatElement.dispatchEvent(new MouseEvent('mouseenter', { bubbles: true }));
+                await this._sleep(300);
+
+                // Step 2: Find the three-dot/more button (appears on hover)
+                const menuBtn = chatElement.querySelector('button[aria-label*="more" i], button[aria-label*="More" i], button[aria-label*="options" i], button[aria-label*="Options" i], button[data-test-id*="menu"], mat-icon[data-mat-icon-name="more_vert"]');
+                if (!menuBtn) {
+                    // Try parent-level search
+                    const parent = chatElement.closest('mat-list-item, [role="listitem"]') || chatElement.parentElement;
+                    const altBtn = parent?.querySelector('button[aria-label*="more" i], button[aria-label*="More" i]');
+                    if (altBtn) {
+                        altBtn.click();
+                    } else {
+                        throw new Error('Menu button not found');
+                    }
+                } else {
+                    const clickTarget = menuBtn.closest('button') || menuBtn;
+                    clickTarget.click();
+                }
+                await this._sleep(400);
+
+                // Step 3: Find "Delete" option in the opened menu
+                const menuItems = document.querySelectorAll('[role="menuitem"], mat-menu-item, button.mat-mdc-menu-item');
+                let deleteBtn = null;
+                menuItems.forEach(item => {
+                    const text = item.textContent.trim().toLowerCase();
+                    if (text.includes('delete') || text.includes('删除')) {
+                        deleteBtn = item;
+                    }
+                });
+
+                if (!deleteBtn) throw new Error('Delete option not found');
+                deleteBtn.click();
+                await this._sleep(400);
+
+                // Step 4: Confirm in dialog
+                const confirmBtns = document.querySelectorAll('button.confirm-button, button[data-test-id*="confirm"], mat-dialog-actions button, .mdc-dialog__actions button');
+                let confirmed = false;
+                confirmBtns.forEach(btn => {
+                    const text = btn.textContent.trim().toLowerCase();
+                    if (text.includes('delete') || text.includes('删除') || text.includes('confirm') || text.includes('确认')) {
+                        btn.click();
+                        confirmed = true;
+                    }
+                });
+                if (!confirmed) {
+                    // Fallback: look for any primary/danger button in a dialog
+                    const dialogs = document.querySelectorAll('[role="dialog"], mat-dialog-container, .mdc-dialog');
+                    dialogs.forEach(d => {
+                        const btns = d.querySelectorAll('button');
+                        if (btns.length >= 2) {
+                            btns[btns.length - 1].click(); // Usually the last button is confirm
+                            confirmed = true;
+                        }
+                    });
+                }
+                await this._sleep(300);
+                return true;
+            } catch (e) {
+                Logger.warn('Delete failed', { error: e.message });
+                // Close any open menu
+                document.body.click();
+                await this._sleep(200);
+                return false;
+            }
+        },
+
+        async _batchDelete() {
+            if (this._deleting || this._selected.size === 0) return;
+            this._deleting = true;
+            this._progress = { current: 0, total: this._selected.size };
+
+            const chats = this._scanChats();
+            const toDelete = chats.filter(c => this._selected.has(c.id));
+            let deleted = 0;
+            let failed = 0;
+
+            for (const chat of toDelete) {
+                this._progress.current++;
+                PanelUI.renderDetailsPane();
+                const ok = await this._deleteChat(chat.element);
+                if (ok) {
+                    deleted++;
+                    this._selected.delete(chat.id);
+                } else {
+                    failed++;
+                }
+                await this._sleep(500);
+            }
+
+            this._deleting = false;
+            this._selected.clear();
+            Logger.info('Batch delete complete', { deleted, failed });
+            PanelUI.renderDetailsPane();
+        },
+
+        _sleep(ms) {
+            return new Promise(r => setTimeout(r, ms));
+        },
+
+        renderToDetailsPane(container) {
+            const section = document.createElement('div');
+            section.className = 'gf-section';
+
+            // Header
+            const header = document.createElement('div');
+            header.style.cssText = 'display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;';
+            const title = document.createElement('div');
+            title.style.cssText = 'font-weight:600;font-size:13px;color:var(--text-main);';
+            title.textContent = '🗑️ Batch Delete';
+            header.appendChild(title);
+
+            if (this._deleting) {
+                const progress = document.createElement('span');
+                progress.style.cssText = 'font-size:11px;color:var(--accent);';
+                progress.textContent = 'Deleting ' + this._progress.current + '/' + this._progress.total + '...';
+                header.appendChild(progress);
+            } else if (this._selected.size > 0) {
+                const deleteBtn = document.createElement('button');
+                deleteBtn.style.cssText = 'background:#ea4335;color:#fff;border:none;border-radius:6px;padding:4px 10px;font-size:11px;cursor:pointer;';
+                deleteBtn.textContent = 'Delete ' + this._selected.size + ' chats';
+                deleteBtn.onclick = () => {
+                    if (confirm('确认删除选中的 ' + this._selected.size + ' 个对话？此操作不可撤销。')) {
+                        this._batchDelete();
+                    }
+                };
+                header.appendChild(deleteBtn);
+            }
+            section.appendChild(header);
+
+            // Chat list with checkboxes
+            const chats = this._scanChats();
+            if (chats.length === 0) {
+                const empty = document.createElement('div');
+                empty.style.cssText = 'font-size:12px;color:var(--text-sub);text-align:center;padding:12px;';
+                empty.textContent = '侧栏中未发现对话项';
+                section.appendChild(empty);
+            } else {
+                const list = document.createElement('div');
+                list.style.cssText = 'max-height:200px;overflow-y:auto;';
+                chats.forEach(chat => {
+                    const row = document.createElement('div');
+                    row.style.cssText = 'display:flex;align-items:center;gap:8px;padding:4px 6px;border-radius:4px;cursor:pointer;font-size:12px;color:var(--text-main);';
+                    row.onmouseenter = () => { row.style.background = 'var(--row-hover)'; };
+                    row.onmouseleave = () => { row.style.background = ''; };
+
+                    const check = document.createElement('div');
+                    const isChecked = this._selected.has(chat.id);
+                    check.style.cssText = 'width:16px;height:16px;border-radius:3px;border:2px solid ' + (isChecked ? 'var(--accent)' : 'var(--text-sub)') + ';background:' + (isChecked ? 'var(--accent)' : 'transparent') + ';flex-shrink:0;display:flex;align-items:center;justify-content:center;font-size:10px;color:#fff;';
+                    check.textContent = isChecked ? '✓' : '';
+
+                    const label = document.createElement('span');
+                    label.style.cssText = 'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;';
+                    label.textContent = chat.title;
+
+                    row.onclick = () => {
+                        if (this._selected.has(chat.id)) {
+                            this._selected.delete(chat.id);
+                        } else {
+                            this._selected.add(chat.id);
+                        }
+                        PanelUI.renderDetailsPane();
+                    };
+
+                    row.appendChild(check);
+                    row.appendChild(label);
+                    list.appendChild(row);
+                });
+                section.appendChild(list);
+            }
+
+            // Select all / Deselect all buttons
+            if (chats.length > 0 && !this._deleting) {
+                const actions = document.createElement('div');
+                actions.style.cssText = 'display:flex;gap:8px;margin-top:6px;';
+                const selectAll = document.createElement('button');
+                selectAll.style.cssText = 'background:var(--btn-bg);color:var(--text-main);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;';
+                selectAll.textContent = 'Select All';
+                selectAll.onclick = () => {
+                    chats.forEach(c => this._selected.add(c.id));
+                    PanelUI.renderDetailsPane();
+                };
+                const deselectAll = document.createElement('button');
+                deselectAll.style.cssText = 'background:var(--btn-bg);color:var(--text-main);border:1px solid var(--border);border-radius:4px;padding:3px 8px;font-size:11px;cursor:pointer;';
+                deselectAll.textContent = 'Deselect All';
+                deselectAll.onclick = () => {
+                    this._selected.clear();
+                    PanelUI.renderDetailsPane();
+                };
+                actions.appendChild(selectAll);
+                actions.appendChild(deselectAll);
+                section.appendChild(actions);
+            }
+
+            container.appendChild(section);
+        }
+    };
+
+    ModuleRegistry.register(BatchDeleteModule);
+
+    // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                          PANEL UI (面板界面)                               ║
     // ╚══════════════════════════════════════════════════════════════════════════╝
 
@@ -3042,6 +3290,16 @@ function filterLogs(entries, opts) {
             if (ModuleRegistry.isEnabled('folders')) {
                 FoldersModule.renderToDetailsPane(pane);
             }
+
+            // Render other enabled modules' details panes
+            ['prompt-vault', 'batch-delete'].forEach(modId => {
+                if (ModuleRegistry.isEnabled(modId)) {
+                    const mod = ModuleRegistry.getAll().find(m => m.id === modId);
+                    if (mod && typeof mod.renderToDetailsPane === 'function') {
+                        mod.renderToDetailsPane(pane);
+                    }
+                }
+            });
 
             // Themes
             pane.appendChild(this.createSectionTitle('Themes'));
@@ -3666,7 +3924,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.9 (Modular)';
+            version.textContent = 'Gemini Assistant v8.10 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
