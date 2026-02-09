@@ -426,7 +426,14 @@ function filterLogs(entries, opts) {
         },
 
         destroy() {
-            // 清理事件监听器 (实际上很难完全清理，这里只是占位)
+            if (this._boundKeyHandler) {
+                document.removeEventListener('keydown', this._boundKeyHandler, true);
+                this._boundKeyHandler = null;
+            }
+            if (this._boundClickHandler) {
+                document.removeEventListener('click', this._boundClickHandler, true);
+                this._boundClickHandler = null;
+            }
             Logger.info('CounterModule destroyed');
         },
 
@@ -434,19 +441,32 @@ function filterLogs(entries, opts) {
             this.loadDataForUser(user);
         },
 
+        _boundKeyHandler: null,
+        _boundClickHandler: null,
+
         bindEvents() {
+            if (this._boundKeyHandler && this._boundClickHandler) return; // Prevent double binding
+            if (this._boundKeyHandler) {
+                document.removeEventListener('keydown', this._boundKeyHandler, true);
+                this._boundKeyHandler = null;
+            }
+            if (this._boundClickHandler) {
+                document.removeEventListener('click', this._boundClickHandler, true);
+                this._boundClickHandler = null;
+            }
+
             // 键盘监听
-            document.addEventListener('keydown', (e) => {
+            this._boundKeyHandler = (e) => {
                 if (!ModuleRegistry.isEnabled('counter')) return;
                 if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.originalEvent?.isComposing) return;
                 const act = document.activeElement;
                 if (act && (act.tagName === 'TEXTAREA' || act.getAttribute('contenteditable') === 'true')) {
                     setTimeout(() => this.attemptIncrement(), 50);
                 }
-            }, true);
+            };
 
             // 点击监听
-            document.addEventListener('click', (e) => {
+            this._boundClickHandler = (e) => {
                 if (!ModuleRegistry.isEnabled('counter')) return;
                 const btn = e.target?.closest ? e.target.closest('button') : null;
                 if (btn && !btn.disabled) {
@@ -455,7 +475,10 @@ function filterLogs(entries, opts) {
                         this.attemptIncrement();
                     }
                 }
-            }, true);
+            };
+
+            document.addEventListener('keydown', this._boundKeyHandler, true);
+            document.addEventListener('click', this._boundClickHandler, true);
         },
 
         // --- 数据管理 ---
@@ -745,6 +768,23 @@ function filterLogs(entries, opts) {
             document.querySelectorAll('.gf-sidebar-dot').forEach(el => el.remove());
             // 移除模态框
             document.querySelectorAll('.gf-modal-overlay').forEach(el => el.remove());
+
+            // 清理拖拽属性和事件
+            if (this.chatCache) {
+                this.chatCache.forEach(chat => {
+                    if (chat.element) {
+                        chat.element.removeAttribute('draggable');
+                        chat.element.ondragstart = null;
+                        chat.element.ondragend = null;
+                        chat.element.style.opacity = '';
+                    }
+                });
+            }
+            // 清理所有高亮
+            document.querySelectorAll('.gf-drop-highlight').forEach(el => {
+                el.classList.remove('gf-drop-highlight');
+            });
+
             Logger.info('FoldersModule destroyed');
         },
 

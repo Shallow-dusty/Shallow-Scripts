@@ -42,7 +42,7 @@ Ultimate 版本采用模块化架构，支持功能扩展：
           ▼                   ▼                   ▼
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
 │ CounterModule   │  │ FoldersModule   │  │  [Future Mod]   │
-│  (enabled)      │  │  (placeholder)  │  │                 │
+│  (default: on)  │  │  (default: off) │  │                 │
 └─────────────────┘  └─────────────────┘  └─────────────────┘
 ```
 
@@ -91,14 +91,35 @@ Extracts Google account email from DOM elements (`img[alt*="@"]`, `button[aria-l
 - `getDayKey(resetHour)` calculates current "day" respecting custom reset time
 
 ### Model & Account Detection (Ultimate v6.6+)
-- **Model Detection**: Reads current model from `button.input-area-switch` text (快速/思考/Pro → flash/thinking/pro)
+- **Model Detection**: Reads current model via selectors (priority order):
+  1. `button.input-area-switch` — primary (Gemini 3 UI, text: Fast/Thinking/Pro)
+  2. `[data-test-id="bard-mode-menu-button"]` — fallback (DIV variant)
+  3. `.bard-mode-list-button.is-selected` — menu open state
+- **MODEL_DETECT_MAP**: 快速/Fast/Flash → flash, 思考/Thinking → thinking, Pro → pro
 - **Account Type**: Detects Pro/Ultra badge via `button.gds-pillbox-button` or `button.pillbox-btn`
 - **Quota System**: Configurable daily message limit with visual progress bar
 - **Model Multipliers**: Flash (0x), Thinking (0.33x), Pro (1x) - currently simplified to raw count
 
 ## Testing
 
-No automated tests. Manual testing required:
+### Automated Tests
+Reusable modules under `lib/` have unit tests with **100% coverage** enforced:
+```bash
+npm test          # runs: c8 --100 node --test
+```
+- Test runner: Node.js built-in `node:test`
+- Coverage tool: `c8` (configured in `.c8rc.json`, targets `lib/**/*.js`)
+- Tests location: `tests/`
+
+### Logger Module Sync
+`lib/debug_logger.js` is the source of truth. Use the sync script to inject it into the userscript:
+```bash
+node scripts/sync_logger.js
+```
+This replaces content between `// <LOGGER_MODULE>` and `// </LOGGER_MODULE>` markers in `GeminiCounter_Ultimate.user.js`.
+
+### Manual Testing
+For UI and integration testing:
 1. Install in Tampermonkey
 2. Open `https://gemini.google.com/`
 3. Verify counter increments on message send

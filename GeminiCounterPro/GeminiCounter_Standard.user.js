@@ -70,12 +70,17 @@
         }
 
         const head = document.createElement('div'); head.className = 'g-head';
-        head.innerHTML = '<span>STATS</span><span style="cursor:pointer">☰</span>';
-        head.lastChild.onclick = (e) => { e.stopPropagation(); toggle(); };
+        const headLabel = document.createElement('span'); headLabel.textContent = 'STATS';
+        const headToggle = document.createElement('span'); headToggle.textContent = '☰'; headToggle.style.cursor = 'pointer';
+        headToggle.onclick = (e) => { e.stopPropagation(); toggle(); };
+        head.append(headLabel, headToggle);
 
         const main = document.createElement('div'); main.className = 'g-main';
-        main.innerHTML = '<div class="g-num">0</div><div class="g-sub">...</div><button class="g-btn">Reset</button>';
-        main.querySelector('button').onclick = reset;
+        const numDiv = document.createElement('div'); numDiv.className = 'g-num'; numDiv.textContent = '0';
+        const subDiv = document.createElement('div'); subDiv.className = 'g-sub'; subDiv.textContent = '...';
+        const resetBtn = document.createElement('button'); resetBtn.className = 'g-btn'; resetBtn.textContent = 'Reset';
+        resetBtn.onclick = reset;
+        main.append(numDiv, subDiv, resetBtn);
 
         const list = document.createElement('div'); list.className = 'g-list';
         p.append(head, main, list);
@@ -99,7 +104,9 @@
         rows.forEach(r => {
             const d = document.createElement('div');
             d.className = `g-row ${state.mode === r.id ? 'active' : ''}`;
-            d.innerHTML = `<span>${r.label}</span><span>${r.val}</span>`;
+            const labelSpan = document.createElement('span'); labelSpan.textContent = r.label;
+            const valSpan = document.createElement('span'); valSpan.textContent = r.val;
+            d.append(labelSpan, valSpan);
             d.onclick = () => { state.mode = r.id; updateUI(); renderList(); };
             l.appendChild(d);
         });
@@ -169,6 +176,6 @@
     setInterval(() => { if (!document.getElementById(PANEL_ID)) createPanel(); }, 1500);
 
     // Input Hooks
-    document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && document.activeElement.tagName === 'TEXTAREA') setTimeout(inc, 50); }, true);
-    document.addEventListener('click', e => { if (e.target.closest('button[aria-label*="Send"]')) inc(); }, true);
+    document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.getAttribute('contenteditable') === 'true')) setTimeout(inc, 50); }, true);
+    document.addEventListener('click', e => { const b = e.target.closest('button[aria-label]'); if (b) { const a = b.getAttribute('aria-label'); if (a.includes('Send') || a.includes('发送')) inc(); } }, true);
 })();

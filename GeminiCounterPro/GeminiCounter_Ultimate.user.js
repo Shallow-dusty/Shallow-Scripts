@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v7.6)
+// @name         Gemini Counter Ultimate (v7.7)
 // @namespace    http://tampermonkey.net/
-// @version      7.6
+// @version      7.7
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v7.6 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v7.7 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -394,7 +394,7 @@ function filterLogs(entries, opts) {
             pro: { label: 'Pro', multiplier: 1, color: '#ea4335' }
         },
         MODEL_DETECT_MAP: {
-            '快速': 'flash', 'Flash': 'flash', 'flash': 'flash',
+            '快速': 'flash', 'Fast': 'flash', 'Flash': 'flash', 'flash': 'flash',
             '思考': 'thinking', 'Thinking': 'thinking', 'thinking': 'thinking',
             'Pro': 'pro', 'pro': 'pro'
         },
@@ -426,7 +426,14 @@ function filterLogs(entries, opts) {
         },
 
         destroy() {
-            // 清理事件监听器 (实际上很难完全清理，这里只是占位)
+            if (this._boundKeyHandler) {
+                document.removeEventListener('keydown', this._boundKeyHandler, true);
+                this._boundKeyHandler = null;
+            }
+            if (this._boundClickHandler) {
+                document.removeEventListener('click', this._boundClickHandler, true);
+                this._boundClickHandler = null;
+            }
             Logger.info('CounterModule destroyed');
         },
 
@@ -434,19 +441,32 @@ function filterLogs(entries, opts) {
             this.loadDataForUser(user);
         },
 
+        _boundKeyHandler: null,
+        _boundClickHandler: null,
+
         bindEvents() {
+            if (this._boundKeyHandler && this._boundClickHandler) return; // Prevent double binding
+            if (this._boundKeyHandler) {
+                document.removeEventListener('keydown', this._boundKeyHandler, true);
+                this._boundKeyHandler = null;
+            }
+            if (this._boundClickHandler) {
+                document.removeEventListener('click', this._boundClickHandler, true);
+                this._boundClickHandler = null;
+            }
+
             // 键盘监听
-            document.addEventListener('keydown', (e) => {
+            this._boundKeyHandler = (e) => {
                 if (!ModuleRegistry.isEnabled('counter')) return;
                 if (e.key !== 'Enter' || e.shiftKey || e.isComposing || e.originalEvent?.isComposing) return;
                 const act = document.activeElement;
                 if (act && (act.tagName === 'TEXTAREA' || act.getAttribute('contenteditable') === 'true')) {
                     setTimeout(() => this.attemptIncrement(), 50);
                 }
-            }, true);
+            };
 
             // 点击监听
-            document.addEventListener('click', (e) => {
+            this._boundClickHandler = (e) => {
                 if (!ModuleRegistry.isEnabled('counter')) return;
                 const btn = e.target?.closest ? e.target.closest('button') : null;
                 if (btn && !btn.disabled) {
@@ -455,7 +475,10 @@ function filterLogs(entries, opts) {
                         this.attemptIncrement();
                     }
                 }
-            }, true);
+            };
+
+            document.addEventListener('keydown', this._boundKeyHandler, true);
+            document.addEventListener('click', this._boundClickHandler, true);
         },
 
         // --- 数据管理 ---
@@ -575,6 +598,12 @@ function filterLogs(entries, opts) {
                 const modeBtn = document.querySelector('button.input-area-switch');
                 if (modeBtn) {
                     const text = modeBtn.textContent.trim();
+                    const key = this.MODEL_DETECT_MAP[text];
+                    if (key) return key;
+                }
+                const pillLabel = document.querySelector('[data-test-id="bard-mode-menu-button"]');
+                if (pillLabel) {
+                    const text = pillLabel.textContent.trim().split(/\s/)[0];
                     const key = this.MODEL_DETECT_MAP[text];
                     if (key) return key;
                 }
@@ -745,6 +774,23 @@ function filterLogs(entries, opts) {
             document.querySelectorAll('.gf-sidebar-dot').forEach(el => el.remove());
             // 移除模态框
             document.querySelectorAll('.gf-modal-overlay').forEach(el => el.remove());
+
+            // 清理拖拽属性和事件
+            if (this.chatCache) {
+                this.chatCache.forEach(chat => {
+                    if (chat.element) {
+                        chat.element.removeAttribute('draggable');
+                        chat.element.ondragstart = null;
+                        chat.element.ondragend = null;
+                        chat.element.style.opacity = '';
+                    }
+                });
+            }
+            // 清理所有高亮
+            document.querySelectorAll('.gf-drop-highlight').forEach(el => {
+                el.classList.remove('gf-drop-highlight');
+            });
+
             Logger.info('FoldersModule destroyed');
         },
 
@@ -933,13 +979,15 @@ function filterLogs(entries, opts) {
             // 延迟初始化
             setTimeout(() => this.markSidebarChats(), 1500);
 
-            // 监听 DOM 变化
+            // 监听 DOM 变化 (尽量缩小到侧边栏，降级到 body)
             this.observer = new MutationObserver(() => {
                 clearTimeout(this._markTimeout);
                 this._markTimeout = setTimeout(() => this.markSidebarChats(), 500);
             });
 
-            this.observer.observe(document.body, {
+            const sidebar = document.querySelector('bard-sidenav-container, nav, [role="navigation"]');
+            const target = sidebar || document.body;
+            this.observer.observe(target, {
                 childList: true,
                 subtree: true
             });
@@ -2147,6 +2195,10 @@ function filterLogs(entries, opts) {
         },
 
         makeDraggable(el, handle) {
+            // Clean up previous drag listeners if any
+            if (this._dragMove) document.removeEventListener('mousemove', this._dragMove);
+            if (this._dragUp) document.removeEventListener('mouseup', this._dragUp);
+
             let isDragging = false, startX, startY, iLeft, iTop;
             handle.onmousedown = (e) => {
                 isDragging = true;
@@ -2161,7 +2213,7 @@ function filterLogs(entries, opts) {
                 el.style.top = iTop + 'px';
                 handle.style.cursor = 'grabbing';
             };
-            document.addEventListener('mousemove', (e) => {
+            this._dragMove = (e) => {
                 if (!isDragging) return;
                 e.preventDefault();
                 let nL = iLeft + e.clientX - startX;
@@ -2172,13 +2224,15 @@ function filterLogs(entries, opts) {
                 if (nT + el.offsetHeight > window.innerHeight) nT = window.innerHeight - el.offsetHeight;
                 el.style.left = nL + 'px';
                 el.style.top = nT + 'px';
-            });
-            document.addEventListener('mouseup', () => {
+            };
+            this._dragUp = () => {
                 if (!isDragging) return;
                 isDragging = false;
                 handle.style.cursor = 'grab';
                 GM_setValue(GLOBAL_KEYS.POS, { top: el.style.top, left: el.style.left, bottom: 'auto', right: 'auto' });
-            });
+            };
+            document.addEventListener('mousemove', this._dragMove);
+            document.addEventListener('mouseup', this._dragUp);
         },
 
         // --- Settings Modal ---
@@ -2432,6 +2486,12 @@ function filterLogs(entries, opts) {
             };
             dataSection.appendChild(exportBtn);
 
+            const calibrateBtn = document.createElement('button');
+            calibrateBtn.className = 'settings-btn';
+            calibrateBtn.textContent = '🔧 Calibrate Data';
+            calibrateBtn.onclick = () => this.openCalibrationModal();
+            dataSection.appendChild(calibrateBtn);
+
             const resetPosBtn = document.createElement('button');
             resetPosBtn.className = 'settings-btn';
             resetPosBtn.textContent = '📍 Reset Panel Position';
@@ -2498,7 +2558,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v7.6 (Modular)';
+            version.textContent = 'Gemini Assistant v7.7 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
@@ -2545,7 +2605,10 @@ function filterLogs(entries, opts) {
 
             const infoLine = (label, value) => {
                 const div = document.createElement('div');
-                div.innerHTML = `<strong>${label}:</strong> ${value}`;
+                const strong = document.createElement('strong');
+                strong.textContent = label + ':';
+                div.appendChild(strong);
+                div.appendChild(document.createTextNode(' ' + value));
                 return div;
             };
 
@@ -2649,6 +2712,138 @@ function filterLogs(entries, opts) {
             body.appendChild(search);
             body.appendChild(actions);
             body.appendChild(logList);
+
+            modal.appendChild(header);
+            modal.appendChild(body);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+        },
+
+        // --- Calibration Modal ---
+        openCalibrationModal() {
+            const MODAL_ID = 'gemini-calibrate-modal';
+            if (document.getElementById(MODAL_ID)) return;
+
+            const cm = CounterModule;
+            const todayKey = Core.getDayKey(cm.resetHour);
+
+            const overlay = document.createElement('div');
+            overlay.id = MODAL_ID;
+            overlay.className = 'settings-overlay';
+            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+            const modal = document.createElement('div');
+            modal.className = 'settings-modal';
+            Core.applyTheme(modal, currentTheme);
+
+            // Header
+            const header = document.createElement('div');
+            header.className = 'settings-header';
+            const title = document.createElement('h3');
+            title.textContent = 'Calibrate Data';
+            const closeBtn = document.createElement('span');
+            closeBtn.className = 'settings-close';
+            closeBtn.textContent = '\u2715';
+            closeBtn.onclick = () => overlay.remove();
+            header.appendChild(title);
+            header.appendChild(closeBtn);
+
+            // Body
+            const body = document.createElement('div');
+            body.className = 'settings-body';
+
+            const mkField = (label, value) => {
+                const row = document.createElement('div');
+                row.className = 'settings-row';
+                const lbl = document.createElement('span');
+                lbl.className = 'settings-label';
+                lbl.textContent = label;
+                const input = document.createElement('input');
+                input.type = 'number';
+                input.min = '0';
+                input.value = value;
+                input.className = 'settings-select';
+                input.style.width = '80px';
+                input.style.textAlign = 'center';
+                row.appendChild(lbl);
+                row.appendChild(input);
+                return { row, input };
+            };
+
+            const section = document.createElement('div');
+            section.className = 'settings-section';
+            const sTitle = document.createElement('div');
+            sTitle.className = 'settings-section-title';
+            sTitle.textContent = 'Adjust Values';
+            section.appendChild(sTitle);
+
+            const todayField = mkField('Today Messages', cm.state.dailyCounts[todayKey]?.messages || 0);
+            const totalField = mkField('Lifetime Total', cm.state.total);
+            const chatsField = mkField('Chats Created', cm.state.totalChatsCreated);
+            section.appendChild(todayField.row);
+            section.appendChild(totalField.row);
+            section.appendChild(chatsField.row);
+            body.appendChild(section);
+
+            // Current Chat field (only if in a chat)
+            let chatField = null;
+            const currentCid = Core.getChatId();
+            if (currentCid) {
+                const chatSection = document.createElement('div');
+                chatSection.className = 'settings-section';
+                const chatTitle = document.createElement('div');
+                chatTitle.className = 'settings-section-title';
+                chatTitle.textContent = 'Current Chat';
+                chatSection.appendChild(chatTitle);
+                chatField = mkField('Chat Messages', cm.state.chats[currentCid] || 0);
+                chatSection.appendChild(chatField.row);
+
+                const chatIdHint = document.createElement('div');
+                chatIdHint.style.cssText = 'font-size: 9px; color: var(--text-sub); opacity: 0.5; margin-top: 2px;';
+                chatIdHint.textContent = 'ID: ' + currentCid.slice(0, 12) + '...';
+                chatSection.appendChild(chatIdHint);
+                body.appendChild(chatSection);
+            }
+
+            // Apply button
+            const applyBtn = document.createElement('button');
+            applyBtn.className = 'settings-btn';
+            applyBtn.textContent = 'Apply Calibration';
+            applyBtn.style.marginTop = '12px';
+            applyBtn.style.background = 'rgba(138, 180, 248, 0.2)';
+            applyBtn.style.color = 'var(--accent, #8ab4f8)';
+            applyBtn.style.fontWeight = '500';
+            applyBtn.onclick = () => {
+                const newToday = parseInt(todayField.input.value, 10) || 0;
+                const newTotal = parseInt(totalField.input.value, 10) || 0;
+                const newChats = parseInt(chatsField.input.value, 10) || 0;
+
+                cm.ensureTodayEntry();
+                cm.state.dailyCounts[todayKey].messages = newToday;
+                cm.state.total = newTotal;
+                cm.state.totalChatsCreated = newChats;
+
+                if (chatField && currentCid) {
+                    const newChatVal = parseInt(chatField.input.value, 10) || 0;
+                    cm.state.chats[currentCid] = newChatVal;
+                }
+
+                cm.saveData();
+                PanelUI.update();
+                if (cm.state.isExpanded) PanelUI.renderDetailsPane();
+
+                Logger.info('Data calibrated', {
+                    today: newToday, total: newTotal, chats: newChats,
+                    chatId: currentCid || null
+                });
+                overlay.remove();
+            };
+            body.appendChild(applyBtn);
+
+            const note = document.createElement('div');
+            note.className = 'settings-version';
+            note.textContent = 'Manually adjust counter values';
+            body.appendChild(note);
 
             modal.appendChild(header);
             modal.appendChild(body);
