@@ -41,9 +41,17 @@ Ultimate 版本采用模块化架构，支持功能扩展：
           ┌───────────────────┼───────────────────┐
           ▼                   ▼                   ▼
 ┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│ CounterModule   │  │ FoldersModule   │  │  [Future Mod]   │
-│  (default: on)  │  │  (default: off) │  │                 │
+│ CounterModule   │  │ FoldersModule   │  │  ExportModule   │
+│  (default: on)  │  │  (default: off) │  │  (default: on)  │
 └─────────────────┘  └─────────────────┘  └─────────────────┘
+┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
+│ PromptVault     │  │ DefaultModel    │  │  BatchDelete    │
+│  (default: off) │  │  (default: off) │  │  (default: off) │
+└─────────────────┘  └─────────────────┘  └─────────────────┘
+┌─────────────────┐  ┌─────────────────┐
+│ QuoteReply      │  │  UITweaks       │
+│  (default: off) │  │  (default: off) │
+└─────────────────┘  └─────────────────┘
 ```
 
 ### Module Interface

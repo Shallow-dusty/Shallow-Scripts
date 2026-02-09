@@ -1,6 +1,6 @@
 # Gemini Counter Code Archive (Gemini 计数器代码库)
 
-这是一个 Tampermonkey 油猴脚本集合，为 Google Gemini 提供精准的交互计数功能。当前版本：**v8.12**。
+这是一个 Tampermonkey 油猴脚本集合，为 Google Gemini 提供精准的交互计数功能。当前版本：**v9.0**。
 为了满足不同用户的需求，本代码库提供了 **4 个不同版本** 的脚本，你可以根据喜好选择其中一个安装。
 
 ## 📂 版本列表 (Versions)
@@ -22,9 +22,15 @@
 
 ### 4. 💎 终极版 (Ultimate) → Gemini Assistant
 *   **文件名**: `GeminiCounter_Ultimate.user.js` (推荐)
-*   **特点**: **模块化架构** - 可扩展的 Gemini 助手平台。
-    *   📊 **计数器模块**: 消息统计、热力图、配额追踪、模型检测
-    *   📁 **文件夹模块**: 整理对话到自定义文件夹 (Pure Enhancement - 不修改原有布局)
+*   **特点**: **模块化架构** - 可扩展的 Gemini 助手平台，8 个功能模块：
+    *   📊 **计数器模块**: 消息统计、热力图、配额追踪、模型检测、加权配额
+    *   📁 **文件夹模块**: 整理对话到自定义文件夹、拖拽排序、搜索/置顶/批量操作/自动分类
+    *   📤 **导出模块**: JSON / CSV / Markdown 三种格式导出统计数据
+    *   💎 **Prompt 金库**: 保存和快速插入常用 Prompt 模板
+    *   🤖 **默认模型**: 新对话自动选择首选模型 (Fast/Thinking/Pro)
+    *   🗑️ **批量删除**: 面板中批量选择并删除对话
+    *   💬 **引用回复**: 选中文本快速插入引用到输入框
+    *   🎨 **UI 自定义**: Tab 标题同步 / Ctrl+Enter 发送 / 布局调整
     *   🎛️ **Feature Extensions**: 在设置中开关各功能模块
 *   **适用**: Power User，多账号用户，需要扩展功能。
 
@@ -59,20 +65,21 @@ Script Weaver
 
 ## 🗺️ Roadmap (开发计划)
 
-### 当前开发 (v7.x)
-- [x] **模块化架构**: Core + Module 分离，支持功能扩展
-- [x] **文件夹模块**: 整理对话到自定义文件夹 (Pure Enhancement 方式)
-  - 小圆点颜色标记 + 面板内管理 + 拖拽分组
+### v8.x — 已完成
+- [x] **精确配额追踪**: byModel 字段 + 加权配额计算
+- [x] **ExportModule**: JSON / CSV / Markdown 导出
+- [x] **Paper 主题优化**: 19 CSS 变量全覆盖
+- [x] **文件夹增强**: 拖拽排序 / 搜索 / 置顶 / 自定义颜色 / 批量操作 / 自动分类 / 统计
+- [x] **Dashboard 模型可视化**: 分布条形图 + 加权汇总
+- [x] **PromptVaultModule**: Prompt 金库
+- [x] **DefaultModelModule**: 默认模型自动切换
+- [x] **BatchDeleteModule**: 批量删除对话
+- [x] **QuoteReplyModule**: 引用回复
+- [x] **UITweaksModule**: UI 自定义合集
 
-### UI/UX 优化
-- [ ] **Paper 主题视觉优化**: 当前仍存在轻微视觉污染，需要进一步调整对比度和色彩平衡
-- [ ] **更多主题策略**: 借助 UI/UX 设计原则，扩展主题系统 (深色 OLED、高对比度无障碍、自定义色板等)
-
-### 数据增强
-- [ ] **精确配额追踪**: 根据模型 multiplier 计算实际配额消耗 (Flash: 0x, Thinking: 0.33x, Pro: 1x)
-- [ ] **导出格式扩展**: 支持 CSV、Markdown 等更多导出格式
+### 未来考虑
+- [ ] **更多主题策略**: 深色 OLED、高对比度无障碍、自定义色板
+- [ ] **云同步**: Google Drive 数据备份 (受 Tampermonkey 限制)
 
 ### 已搁置
 - ~~消息搜索功能~~: 消费者版 Gemini 无法获取完整对话内容，实现价值有限。Enterprise 版已有原生语义搜索。
-
-

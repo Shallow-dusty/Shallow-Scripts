@@ -1,5 +1,24 @@
 # 📜 Gemini Counter Pro - Changelog
 
+### 📦 v9.0 — Full Feature Platform Release (全功能平台正式版)
+
+> _2026/02/10_
+
+**v9.0 是 v8.x 系列的集大成版本**，包含 8 个可独立开关的功能模块，从 v8.0 到 v8.12 共 13 个版本的迭代成果：
+
+| 模块 | 功能 | 默认 |
+|------|------|------|
+| 📊 CounterModule | 消息统计 + 热力图 + 加权配额追踪 + 模型检测 | ON |
+| 📁 FoldersModule | 对话文件夹 + 拖拽排序 + 搜索/置顶/批量/自动分类 | OFF |
+| 📤 ExportModule | JSON / CSV / Markdown 数据导出 | ON |
+| 💎 PromptVaultModule | Prompt 金库，保存和快速插入模板 | OFF |
+| 🤖 DefaultModelModule | 新对话自动选择首选模型 | OFF |
+| 🗑️ BatchDeleteModule | 面板中批量选择并删除对话 | OFF |
+| 💬 QuoteReplyModule | 选中文本快速引用到输入框 | OFF |
+| 🎨 UITweaksModule | Tab 标题 / Ctrl+Enter / 布局调整 (5 子功能) | OFF |
+
+---
+
 ### 📦 v8.x Series: Full Feature Platform (全功能平台)
 
 #### **v8.12**
