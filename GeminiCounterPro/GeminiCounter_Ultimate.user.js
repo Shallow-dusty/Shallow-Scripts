@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.6)
+// @name         Gemini Counter Ultimate (v8.7)
 // @namespace    http://tampermonkey.net/
-// @version      8.6
+// @version      8.7
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.6 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.7 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -3278,7 +3278,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.6 (Modular)';
+            version.textContent = 'Gemini Assistant v8.7 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
@@ -3773,6 +3773,71 @@ function filterLogs(entries, opts) {
 
             hmContainer.appendChild(hmWrapper);
             content.appendChild(hmContainer);
+
+            // Model Distribution Chart
+            const allByModel = { flash: 0, thinking: 0, pro: 0 };
+            Object.values(cm.state.dailyCounts).forEach(entry => {
+                if (entry.byModel) {
+                    allByModel.flash += entry.byModel.flash || 0;
+                    allByModel.thinking += entry.byModel.thinking || 0;
+                    allByModel.pro += entry.byModel.pro || 0;
+                }
+            });
+            const modelTotal = allByModel.flash + allByModel.thinking + allByModel.pro;
+
+            if (modelTotal > 0) {
+                const modelContainer = document.createElement('div');
+                modelContainer.className = 'heatmap-container';
+
+                const modelTitle = document.createElement('div');
+                modelTitle.className = 'heatmap-title';
+                const modelTitleSpan = document.createElement('span');
+                modelTitleSpan.textContent = 'Model Usage Distribution';
+                modelTitle.appendChild(modelTitleSpan);
+                modelContainer.appendChild(modelTitle);
+
+                const modelColors = { flash: '#81c995', thinking: '#fdd663', pro: '#f28b82' };
+                const models = [
+                    { key: 'flash', label: '3 Flash', count: allByModel.flash },
+                    { key: 'thinking', label: '3 Flash Thinking', count: allByModel.thinking },
+                    { key: 'pro', label: '3 Pro', count: allByModel.pro }
+                ];
+
+                models.forEach(m => {
+                    const pct = (m.count / modelTotal * 100).toFixed(1);
+                    const barRow = document.createElement('div');
+                    barRow.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 8px;';
+
+                    const labelEl = document.createElement('div');
+                    labelEl.style.cssText = 'font-size: 11px; color: var(--text-sub); width: 110px; flex-shrink: 0;';
+                    labelEl.textContent = m.label;
+
+                    const barBg = document.createElement('div');
+                    barBg.style.cssText = 'flex: 1; height: 16px; background: var(--btn-bg, rgba(255,255,255,0.05)); border-radius: 4px; overflow: hidden;';
+                    const barFill = document.createElement('div');
+                    barFill.style.cssText = `height: 100%; width: ${pct}%; background: ${modelColors[m.key]}; border-radius: 4px; transition: width 0.4s;`;
+                    barBg.appendChild(barFill);
+
+                    const valEl = document.createElement('div');
+                    valEl.style.cssText = 'font-size: 11px; color: var(--text-main); width: 70px; text-align: right; flex-shrink: 0; font-family: monospace;';
+                    valEl.textContent = `${m.count} (${pct}%)`;
+
+                    barRow.appendChild(labelEl);
+                    barRow.appendChild(barBg);
+                    barRow.appendChild(valEl);
+                    modelContainer.appendChild(barRow);
+                });
+
+                // Weighted summary
+                const weightedTotal = allByModel.flash * 0 + allByModel.thinking * 0.33 + allByModel.pro * 1;
+                const wStr = weightedTotal % 1 === 0 ? String(weightedTotal) : weightedTotal.toFixed(1);
+                const weightedRow = document.createElement('div');
+                weightedRow.style.cssText = 'font-size: 11px; color: var(--text-sub); margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--divider, rgba(255,255,255,0.05));';
+                weightedRow.textContent = `Total Weighted: ${wStr} | Raw Messages: ${modelTotal}`;
+                modelContainer.appendChild(weightedRow);
+
+                content.appendChild(modelContainer);
+            }
 
             modal.appendChild(content);
             overlay.appendChild(modal);
