@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.5)
+// @name         Gemini Counter Ultimate (v8.6)
 // @namespace    http://tampermonkey.net/
-// @version      8.5
+// @version      8.6
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.5 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.6 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -1033,7 +1033,8 @@ function filterLogs(entries, opts) {
             this.data.folders[id] = {
                 name: name || 'New Folder',
                 color: color || this.FOLDER_COLORS[Object.keys(this.data.folders).length % this.FOLDER_COLORS.length],
-                collapsed: false
+                collapsed: false,
+                rules: []  // Auto-classification rules: [{ type: 'keyword', value: 'string' }]
             };
             this.data.folderOrder.push(id);
             this.saveData();
@@ -1132,6 +1133,49 @@ function filterLogs(entries, opts) {
                 .filter(([, fid]) => fid === folderId)
                 .map(([cid]) => cid);
             return { chatCount: chatIds.length };
+        },
+
+        setFolderRules(folderId, rules) {
+            if (this.data.folders[folderId]) {
+                this.data.folders[folderId].rules = rules;
+                this.saveData();
+            }
+        },
+
+        autoClassify() {
+            let classified = 0;
+            this.scanSidebarChats();
+            this.chatCache.forEach(chat => {
+                // Skip already assigned
+                if (this.data.chatToFolder[chat.id]) return;
+                const title = chat.title.toLowerCase();
+                for (const folderId of this.data.folderOrder) {
+                    const folder = this.data.folders[folderId];
+                    if (!folder || !folder.rules || folder.rules.length === 0) continue;
+                    const matched = folder.rules.some(rule => {
+                        if (rule.type === 'keyword' && rule.value) {
+                            return title.includes(rule.value.toLowerCase());
+                        }
+                        if (rule.type === 'regex' && rule.value) {
+                            try { return new RegExp(rule.value, 'i').test(chat.title); }
+                            catch { return false; }
+                        }
+                        return false;
+                    });
+                    if (matched) {
+                        this.data.chatToFolder[chat.id] = folderId;
+                        classified++;
+                        break; // First match wins
+                    }
+                }
+            });
+            if (classified > 0) {
+                this.saveData();
+                this.markSidebarChats();
+                PanelUI.renderDetailsPane();
+                Logger.info(`Auto-classified ${classified} chats`);
+            }
+            return classified;
         },
 
         // --- 侧边栏扫描 ---
@@ -1735,6 +1779,25 @@ function filterLogs(entries, opts) {
                 this.showFolderModal(null, 'Create Folder', '', this.FOLDER_COLORS[0]);
             };
             container.appendChild(addBtn);
+
+            // Auto-classify button (only if rules exist)
+            const hasRules = this.data.folderOrder.some(fid => {
+                const f = this.data.folders[fid];
+                return f && f.rules && f.rules.length > 0;
+            });
+            if (hasRules) {
+                const classifyBtn = document.createElement('button');
+                classifyBtn.className = 'gf-add-btn';
+                classifyBtn.style.borderStyle = 'solid';
+                classifyBtn.textContent = '🤖 Auto Classify';
+                classifyBtn.onclick = (e) => {
+                    e.stopPropagation();
+                    const count = this.autoClassify();
+                    classifyBtn.textContent = count > 0 ? `✓ Classified ${count} chats` : '✓ Nothing to classify';
+                    setTimeout(() => { classifyBtn.textContent = '🤖 Auto Classify'; }, 2000);
+                };
+                container.appendChild(classifyBtn);
+            }
         },
 
         createFolderRow(folderId, folder, chats) {
@@ -1996,6 +2059,61 @@ function filterLogs(entries, opts) {
             hexWrap.appendChild(hexLabel);
             hexWrap.appendChild(hexInput);
 
+            // Rules section (edit mode only)
+            let rulesData = [];
+            let rulesContainer = null;
+            if (isEdit) {
+                rulesData = [...(this.data.folders[folderId].rules || [])];
+
+                const rulesSection = document.createElement('div');
+                rulesSection.style.cssText = 'margin-bottom: 16px;';
+                const rulesLabel = document.createElement('div');
+                rulesLabel.style.cssText = 'font-size: 11px; color: var(--text-sub, #9aa0a6); margin-bottom: 6px;';
+                rulesLabel.textContent = 'Auto-classify rules (keyword or /regex/):';
+                rulesSection.appendChild(rulesLabel);
+
+                rulesContainer = document.createElement('div');
+                rulesContainer.style.cssText = 'display: flex; flex-direction: column; gap: 4px;';
+
+                const renderRules = () => {
+                    rulesContainer.replaceChildren();
+                    rulesData.forEach((rule, idx) => {
+                        const ruleRow = document.createElement('div');
+                        ruleRow.style.cssText = 'display: flex; gap: 4px; align-items: center;';
+                        const ruleInput = document.createElement('input');
+                        ruleInput.type = 'text';
+                        ruleInput.value = rule.type === 'regex' ? `/${rule.value}/` : rule.value;
+                        ruleInput.style.cssText = 'flex: 1; padding: 4px 8px; font-size: 11px; border-radius: 4px; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--input-bg, rgba(255,255,255,0.05)); color: var(--text-main, #e8eaed); box-sizing: border-box;';
+                        ruleInput.oninput = () => {
+                            const val = ruleInput.value.trim();
+                            const regexMatch = val.match(/^\/(.+)\/$/);
+                            if (regexMatch) {
+                                rulesData[idx] = { type: 'regex', value: regexMatch[1] };
+                            } else {
+                                rulesData[idx] = { type: 'keyword', value: val };
+                            }
+                        };
+                        const delBtn = document.createElement('span');
+                        delBtn.textContent = '✕';
+                        delBtn.style.cssText = 'cursor: pointer; font-size: 12px; color: var(--text-sub); opacity: 0.6;';
+                        delBtn.onclick = () => { rulesData.splice(idx, 1); renderRules(); };
+                        ruleRow.appendChild(ruleInput);
+                        ruleRow.appendChild(delBtn);
+                        rulesContainer.appendChild(ruleRow);
+                    });
+                };
+                renderRules();
+
+                const addRuleBtn = document.createElement('button');
+                addRuleBtn.style.cssText = 'font-size: 10px; padding: 4px 8px; border-radius: 4px; border: 1px dashed var(--divider, rgba(255,255,255,0.15)); background: transparent; color: var(--text-sub, #9aa0a6); cursor: pointer; margin-top: 4px;';
+                addRuleBtn.textContent = '+ Add Rule';
+                addRuleBtn.onclick = () => { rulesData.push({ type: 'keyword', value: '' }); renderRules(); };
+
+                rulesSection.appendChild(rulesContainer);
+                rulesSection.appendChild(addRuleBtn);
+                modal.rulesSection = rulesSection;
+            }
+
             const actionsDiv = document.createElement('div');
             actionsDiv.className = 'gf-modal-actions';
 
@@ -2023,6 +2141,7 @@ function filterLogs(entries, opts) {
                 if (isEdit) {
                     this.renameFolder(folderId, name);
                     this.setFolderColor(folderId, selectedColor);
+                    this.setFolderRules(folderId, rulesData.filter(r => r.value));
                 } else {
                     this.createFolder(name, selectedColor);
                 }
@@ -2036,6 +2155,7 @@ function filterLogs(entries, opts) {
             modal.appendChild(input);
             modal.appendChild(colorsContainer);
             modal.appendChild(hexWrap);
+            if (modal.rulesSection) modal.appendChild(modal.rulesSection);
             modal.appendChild(actionsDiv);
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
@@ -3158,7 +3278,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.5 (Modular)';
+            version.textContent = 'Gemini Assistant v8.6 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
