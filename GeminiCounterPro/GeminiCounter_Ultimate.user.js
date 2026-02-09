@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.8)
+// @name         Gemini Counter Ultimate (v8.9)
 // @namespace    http://tampermonkey.net/
-// @version      8.8
+// @version      8.9
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.8 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.9 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -2388,6 +2388,161 @@ function filterLogs(entries, opts) {
     ModuleRegistry.register(PromptVaultModule);
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║                    DEFAULT MODEL MODULE (默认模型模块)                       ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
+
+    const DefaultModelModule = {
+        id: 'default-model',
+        name: '默认模型',
+        description: '新对话自动选择首选模型',
+        icon: '🤖',
+        defaultEnabled: false,
+
+        STORAGE_KEY: 'gemini_default_model',
+        _preferredModel: 'pro',
+        _lastUrl: '',
+        _pollTimer: null,
+        _switching: false,
+
+        init() {
+            this._preferredModel = GM_getValue(this.STORAGE_KEY, 'pro');
+            this._lastUrl = location.href;
+            this._startUrlWatcher();
+            Logger.info('DefaultModelModule initialized', { preferred: this._preferredModel });
+        },
+
+        destroy() {
+            if (this._pollTimer) {
+                clearInterval(this._pollTimer);
+                this._pollTimer = null;
+            }
+            this._switching = false;
+        },
+
+        onUserChange() {},
+
+        setPreferredModel(model) {
+            this._preferredModel = model;
+            GM_setValue(this.STORAGE_KEY, model);
+            Logger.info('Default model set', { model });
+        },
+
+        _isNewChat() {
+            const url = location.href;
+            return url.includes('/app') && !url.includes('/app/') ||
+                   url.endsWith('/app') ||
+                   url.match(/\/app\?[^/]*$/);
+        },
+
+        _startUrlWatcher() {
+            this._pollTimer = setInterval(() => {
+                const currentUrl = location.href;
+                if (currentUrl !== this._lastUrl) {
+                    const wasChat = this._lastUrl.includes('/app/');
+                    this._lastUrl = currentUrl;
+                    if (this._isNewChat() || (!wasChat && this._isNewChat())) {
+                        this._attemptModelSwitch();
+                    }
+                }
+            }, 800);
+        },
+
+        async _attemptModelSwitch() {
+            if (this._switching) return;
+            this._switching = true;
+            try {
+                await this._waitForElement('button.input-area-switch, [data-test-id="bard-mode-menu-button"]', 5000);
+                const currentModel = this._detectCurrentModel();
+                if (currentModel === this._preferredModel) {
+                    Logger.info('Already on preferred model', { model: currentModel });
+                    return;
+                }
+                const modeBtn = document.querySelector('button.input-area-switch') ||
+                                document.querySelector('[data-test-id="bard-mode-menu-button"]');
+                if (!modeBtn) return;
+                modeBtn.click();
+                await this._sleep(300);
+
+                const modelMap = { flash: 'fast', thinking: 'thinking', pro: 'pro' };
+                const testId = 'bard-mode-option-' + (modelMap[this._preferredModel] || this._preferredModel);
+                const option = document.querySelector('[data-test-id="' + testId + '"]');
+                if (option) {
+                    option.click();
+                    Logger.info('Model switched', { from: currentModel, to: this._preferredModel });
+                } else {
+                    document.body.click();
+                    Logger.warn('Model option not found', { testId });
+                }
+            } catch (e) {
+                Logger.warn('Model switch failed', { error: e.message });
+            } finally {
+                this._switching = false;
+            }
+        },
+
+        _detectCurrentModel() {
+            const map = CounterModule.MODEL_DETECT_MAP;
+            const modeBtn = document.querySelector('button.input-area-switch');
+            if (modeBtn) {
+                const text = modeBtn.textContent.trim();
+                if (map[text]) return map[text];
+            }
+            const pill = document.querySelector('[data-test-id="bard-mode-menu-button"]');
+            if (pill) {
+                const text = pill.textContent.trim().split(/\s/)[0];
+                if (map[text]) return map[text];
+            }
+            return 'flash';
+        },
+
+        _waitForElement(selector, timeout) {
+            return new Promise((resolve, reject) => {
+                const el = document.querySelector(selector);
+                if (el) return resolve(el);
+                const start = Date.now();
+                const check = setInterval(() => {
+                    const found = document.querySelector(selector);
+                    if (found) { clearInterval(check); resolve(found); }
+                    else if (Date.now() - start > timeout) { clearInterval(check); reject(new Error('timeout')); }
+                }, 200);
+            });
+        },
+
+        _sleep(ms) {
+            return new Promise(r => setTimeout(r, ms));
+        },
+
+        renderToSettings(container) {
+            const row = document.createElement('div');
+            row.className = 'settings-row';
+            const label = document.createElement('span');
+            label.textContent = '🤖 首选模型';
+            const select = document.createElement('select');
+            select.style.cssText = 'background:var(--input-bg,rgba(255,255,255,0.1));color:var(--text-main);border:1px solid var(--border);border-radius:6px;padding:4px 8px;font-size:13px;';
+            const models = [
+                { value: 'flash', label: '3 Fast (Flash)' },
+                { value: 'thinking', label: '3 Flash Thinking' },
+                { value: 'pro', label: '3 Pro' }
+            ];
+            models.forEach(m => {
+                const opt = document.createElement('option');
+                opt.value = m.value;
+                opt.textContent = m.label;
+                if (m.value === this._preferredModel) opt.selected = true;
+                select.appendChild(opt);
+            });
+            select.addEventListener('change', () => {
+                this.setPreferredModel(select.value);
+            });
+            row.appendChild(label);
+            row.appendChild(select);
+            container.appendChild(row);
+        }
+    };
+
+    ModuleRegistry.register(DefaultModelModule);
+
+    // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                          PANEL UI (面板界面)                               ║
     // ╚══════════════════════════════════════════════════════════════════════════╝
 
@@ -3246,6 +3401,20 @@ function filterLogs(entries, opts) {
             });
             body.appendChild(extSection);
 
+            // === Module-specific Settings (已启用模块的配置) ===
+            ModuleRegistry.getAll().forEach(mod => {
+                if (ModuleRegistry.isEnabled(mod.id) && typeof mod.renderToSettings === 'function') {
+                    const modSection = document.createElement('div');
+                    modSection.className = 'settings-section';
+                    const modTitle = document.createElement('div');
+                    modTitle.className = 'settings-section-title';
+                    modTitle.textContent = mod.icon + ' ' + mod.name + ' Settings';
+                    modSection.appendChild(modTitle);
+                    mod.renderToSettings(modSection);
+                    body.appendChild(modSection);
+                }
+            });
+
             // === Counter Settings Section ===
             const cm = CounterModule;
 
@@ -3497,7 +3666,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.8 (Modular)';
+            version.textContent = 'Gemini Assistant v8.9 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
