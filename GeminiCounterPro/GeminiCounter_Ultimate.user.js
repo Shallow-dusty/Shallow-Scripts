@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.0)
+// @name         Gemini Counter Ultimate (v8.1)
 // @namespace    http://tampermonkey.net/
-// @version      8.0
+// @version      8.1
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.0 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.1 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -764,6 +764,142 @@ function filterLogs(entries, opts) {
 
     // 注册计数器模块
     ModuleRegistry.register(CounterModule);
+
+    // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║                      EXPORT MODULE (导出模块)                              ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
+
+    const ExportModule = {
+        id: 'export',
+        name: '数据导出',
+        description: 'JSON / CSV / Markdown 多格式导出',
+        icon: '📤',
+        defaultEnabled: true,
+
+        init() {
+            Logger.info('ExportModule initialized');
+        },
+        destroy() {
+            Logger.info('ExportModule destroyed');
+        },
+        onUserChange() { /* no-op */ },
+
+        // --- Export helpers ---
+        _download(content, filename, type) {
+            const blob = new Blob([content], { type });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = filename;
+            a.click();
+            URL.revokeObjectURL(url);
+        },
+
+        _getFilePrefix() {
+            const user = Core.getCurrentUser().split('@')[0];
+            const date = new Date().toISOString().slice(0, 10);
+            return `gemini-counter-${user}-${date}`;
+        },
+
+        exportJSON() {
+            const cm = CounterModule;
+            const data = {
+                total: cm.state.total,
+                totalChatsCreated: cm.state.totalChatsCreated,
+                chats: cm.state.chats,
+                dailyCounts: cm.state.dailyCounts,
+                exportedAt: new Date().toISOString()
+            };
+            this._download(JSON.stringify(data, null, 2), `${this._getFilePrefix()}.json`, 'application/json');
+        },
+
+        exportCSV() {
+            const cm = CounterModule;
+            const header = 'Date,Messages,Chats,Flash,Thinking,Pro,Weighted';
+            const rows = [];
+            const sorted = Object.entries(cm.state.dailyCounts || {}).sort(([a], [b]) => a.localeCompare(b));
+            let sumMsg = 0, sumChats = 0, sumF = 0, sumT = 0, sumP = 0, sumW = 0;
+            for (const [date, entry] of sorted) {
+                const msg = entry.messages || 0;
+                const ch = entry.chats || 0;
+                const bm = entry.byModel || { flash: 0, thinking: 0, pro: 0 };
+                const f = bm.flash || 0, t = bm.thinking || 0, p = bm.pro || 0;
+                const w = f * 0 + t * 0.33 + p * 1;
+                const wStr = w % 1 === 0 ? String(w) : w.toFixed(2);
+                rows.push(`${date},${msg},${ch},${f},${t},${p},${wStr}`);
+                sumMsg += msg; sumChats += ch; sumF += f; sumT += t; sumP += p; sumW += w;
+            }
+            const swStr = sumW % 1 === 0 ? String(sumW) : sumW.toFixed(2);
+            rows.push(`TOTAL,${sumMsg},${sumChats},${sumF},${sumT},${sumP},${swStr}`);
+            this._download(header + '\n' + rows.join('\n') + '\n', `${this._getFilePrefix()}.csv`, 'text/csv');
+        },
+
+        exportMarkdown() {
+            const cm = CounterModule;
+            const user = Core.getCurrentUser();
+            const now = new Date().toISOString().slice(0, 10);
+            const streaks = cm.calculateStreaks ? cm.calculateStreaks() : {};
+            const lines = [];
+            lines.push('# Gemini Usage Report');
+            lines.push('');
+            lines.push(`**User:** ${user} | **Exported:** ${now}`);
+            lines.push('');
+            lines.push('## Summary');
+            lines.push('');
+            lines.push('| Metric | Value |');
+            lines.push('|--------|-------|');
+            lines.push(`| Total Messages | ${cm.state.total} |`);
+            lines.push(`| Chats Created | ${cm.state.totalChatsCreated} |`);
+            if (streaks.current !== undefined) lines.push(`| Current Streak | ${streaks.current} days |`);
+            if (streaks.best !== undefined) lines.push(`| Best Streak | ${streaks.best} days |`);
+            lines.push('');
+            const sorted = Object.entries(cm.state.dailyCounts || {}).sort(([a], [b]) => a.localeCompare(b));
+            const last30 = sorted.slice(-30);
+            if (last30.length > 0) {
+                lines.push('## Daily Breakdown (Last 30 Days)');
+                lines.push('');
+                lines.push('| Date | Messages | Flash | Thinking | Pro | Weighted |');
+                lines.push('|------|----------|-------|----------|-----|----------|');
+                for (const [date, entry] of last30) {
+                    const msg = entry.messages || 0;
+                    const bm = entry.byModel || { flash: 0, thinking: 0, pro: 0 };
+                    const f = bm.flash || 0, t = bm.thinking || 0, p = bm.pro || 0;
+                    const w = f * 0 + t * 0.33 + p * 1;
+                    const wStr = w % 1 === 0 ? String(w) : w.toFixed(1);
+                    lines.push(`| ${date} | ${msg} | ${f} | ${t} | ${p} | ${wStr} |`);
+                }
+                lines.push('');
+            }
+            lines.push('---');
+            lines.push('');
+            lines.push('*Generated by Gemini Counter Pro*');
+            lines.push('');
+            this._download(lines.join('\n'), `${this._getFilePrefix()}.md`, 'text/markdown');
+        },
+
+        // Render export buttons section in settings modal
+        renderExportButtons(container) {
+            const jsonBtn = document.createElement('button');
+            jsonBtn.className = 'settings-btn';
+            jsonBtn.textContent = '📤 Export JSON';
+            jsonBtn.onclick = () => this.exportJSON();
+            container.appendChild(jsonBtn);
+
+            const csvBtn = document.createElement('button');
+            csvBtn.className = 'settings-btn';
+            csvBtn.textContent = '📊 Export CSV';
+            csvBtn.onclick = () => this.exportCSV();
+            container.appendChild(csvBtn);
+
+            const mdBtn = document.createElement('button');
+            mdBtn.className = 'settings-btn';
+            mdBtn.textContent = '📝 Export Markdown';
+            mdBtn.onclick = () => this.exportMarkdown();
+            container.appendChild(mdBtn);
+        }
+    };
+
+    ModuleRegistry.register(ExportModule);
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                      FOLDERS MODULE (文件夹模块)                           ║
@@ -2527,26 +2663,31 @@ function filterLogs(entries, opts) {
             dataTitle.textContent = 'Data';
             dataSection.appendChild(dataTitle);
 
-            const exportBtn = document.createElement('button');
-            exportBtn.className = 'settings-btn';
-            exportBtn.textContent = '📤 Export Data (JSON)';
-            exportBtn.onclick = () => {
-                const exportData = {
-                    total: cm.state.total,
-                    totalChatsCreated: cm.state.totalChatsCreated,
-                    chats: cm.state.chats,
-                    dailyCounts: cm.state.dailyCounts,
-                    exportedAt: new Date().toISOString()
+            // Export buttons (delegated to ExportModule when enabled)
+            if (ModuleRegistry.isEnabled('export')) {
+                ExportModule.renderExportButtons(dataSection);
+            } else {
+                const exportBtn = document.createElement('button');
+                exportBtn.className = 'settings-btn';
+                exportBtn.textContent = '📤 Export Data (JSON)';
+                exportBtn.onclick = () => {
+                    const exportData = {
+                        total: cm.state.total,
+                        totalChatsCreated: cm.state.totalChatsCreated,
+                        chats: cm.state.chats,
+                        dailyCounts: cm.state.dailyCounts,
+                        exportedAt: new Date().toISOString()
+                    };
+                    const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
+                    const url = URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = `gemini-counter-${Core.getCurrentUser().split('@')[0]}-${new Date().toISOString().slice(0, 10)}.json`;
+                    a.click();
+                    URL.revokeObjectURL(url);
                 };
-                const blob = new Blob([JSON.stringify(exportData, null, 2)], { type: 'application/json' });
-                const url = URL.createObjectURL(blob);
-                const a = document.createElement('a');
-                a.href = url;
-                a.download = `gemini-counter-${Core.getCurrentUser().split('@')[0]}-${new Date().toISOString().slice(0, 10)}.json`;
-                a.click();
-                URL.revokeObjectURL(url);
-            };
-            dataSection.appendChild(exportBtn);
+                dataSection.appendChild(exportBtn);
+            }
 
             const calibrateBtn = document.createElement('button');
             calibrateBtn.className = 'settings-btn';
@@ -2620,7 +2761,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.0 (Modular)';
+            version.textContent = 'Gemini Assistant v8.1 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
