@@ -294,6 +294,7 @@
     document.addEventListener('click', (e) => {
         const btn = e.target?.closest ? e.target.closest('button') : null;
         if (btn && !btn.disabled) {
+            if (btn.classList.contains('send-button')) { attemptIncrement(); return; }
             const label = btn.getAttribute('aria-label') || '';
             if (label.includes('Send') || label.includes('发送')) attemptIncrement();
         }

@@ -177,5 +177,5 @@
 
     // Input Hooks
     document.addEventListener('keydown', e => { if (e.key === 'Enter' && !e.shiftKey && !e.isComposing && (document.activeElement.tagName === 'TEXTAREA' || document.activeElement.getAttribute('contenteditable') === 'true')) setTimeout(inc, 50); }, true);
-    document.addEventListener('click', e => { const b = e.target.closest('button[aria-label]'); if (b) { const a = b.getAttribute('aria-label'); if (a.includes('Send') || a.includes('发送')) inc(); } }, true);
+    document.addEventListener('click', e => { const b = e.target.closest('button'); if (b && !b.disabled) { if (b.classList.contains('send-button')) { inc(); return; } const a = b.getAttribute('aria-label') || ''; if (a.includes('Send') || a.includes('发送')) inc(); } }, true);
 })();

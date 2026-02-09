@@ -2,6 +2,16 @@
 
 ### 📦 v7.x Series: Modular Architecture (模块化架构)
 
+#### **v7.8**
+
+> _2026/02/10_
+
+- **🌐 Multi-language Send Detection**: 全版本发送按钮检测改用 `button.send-button` 类选择器（语言无关），`aria-label` 作为后备
+- **🏷️ Model Labels**: 面板徽章更新为精确模型名 (3 Flash / 3 Flash Thinking / 3 Pro)
+- **🗺️ i18n Model Detection**: `MODEL_DETECT_MAP` 扩展支持 EN/ZH/JA/KO 四语言 (高速/빠른/사고)
+- **🛡️ CSP Cleanup**: 消除全部版本的 `innerHTML`，Standard 版补齐 `contenteditable` 检测
+- **🧹 Code Quality**: 修复拖拽事件监听器泄漏，缩小 FoldersModule Observer 范围，归档旧版本文件
+
 #### **v7.7**
 
 > _2026/02/10_

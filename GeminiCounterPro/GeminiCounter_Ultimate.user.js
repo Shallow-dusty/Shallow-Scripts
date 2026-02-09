@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v7.7)
+// @name         Gemini Counter Ultimate (v7.8)
 // @namespace    http://tampermonkey.net/
-// @version      7.7
+// @version      7.8
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v7.7 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v7.8 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -389,14 +389,21 @@ function filterLogs(entries, opts) {
         // --- 模块私有常量 ---
         COOLDOWN: 1000,
         MODEL_CONFIG: {
-            flash: { label: 'Flash', multiplier: 0, color: '#34a853' },
-            thinking: { label: 'Thinking', multiplier: 0.33, color: '#fbbc04' },
-            pro: { label: 'Pro', multiplier: 1, color: '#ea4335' }
+            flash: { label: '3 Flash', multiplier: 0, color: '#34a853' },
+            thinking: { label: '3 Flash Thinking', multiplier: 0.33, color: '#fbbc04' },
+            pro: { label: '3 Pro', multiplier: 1, color: '#ea4335' }
         },
         MODEL_DETECT_MAP: {
-            '快速': 'flash', 'Fast': 'flash', 'Flash': 'flash', 'flash': 'flash',
-            '思考': 'thinking', 'Thinking': 'thinking', 'thinking': 'thinking',
-            'Pro': 'pro', 'pro': 'pro'
+            // EN
+            'Fast': 'flash', 'Flash': 'flash', 'flash': 'flash',
+            'Thinking': 'thinking', 'thinking': 'thinking',
+            'Pro': 'pro', 'pro': 'pro',
+            // ZH
+            '快速': 'flash', '思考': 'thinking',
+            // JA
+            '高速': 'flash',
+            // KO
+            '빠른': 'flash', '사고': 'thinking'
         },
 
         // --- 模块私有状态 ---
@@ -470,6 +477,10 @@ function filterLogs(entries, opts) {
                 if (!ModuleRegistry.isEnabled('counter')) return;
                 const btn = e.target?.closest ? e.target.closest('button') : null;
                 if (btn && !btn.disabled) {
+                    if (btn.classList.contains('send-button')) {
+                        this.attemptIncrement();
+                        return;
+                    }
                     const label = btn.getAttribute('aria-label') || '';
                     if (label.includes('Send') || label.includes('发送')) {
                         this.attemptIncrement();
@@ -2558,7 +2569,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v7.7 (Modular)';
+            version.textContent = 'Gemini Assistant v7.8 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);

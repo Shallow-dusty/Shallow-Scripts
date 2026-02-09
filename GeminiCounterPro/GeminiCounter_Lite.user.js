@@ -74,6 +74,7 @@
     document.addEventListener('click', (e) => {
         const btn = e.target?.closest?.('button');
         if (btn && !btn.disabled) {
+            if (btn.classList.contains('send-button')) { tryInc(); return; }
             const l = btn.getAttribute('aria-label') || '';
             if (l.includes('Send') || l.includes('发送')) tryInc();
         }

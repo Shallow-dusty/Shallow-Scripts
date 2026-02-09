@@ -67,7 +67,9 @@ Ultimate 版本采用模块化架构，支持功能扩展：
 ### Core Counting Mechanism
 All versions share the same detection pattern:
 1. **Keydown listener** - Captures Enter key on textarea/contenteditable (with `isComposing` check for IME)
-2. **Click listener** - Detects send button clicks via `aria-label` matching (`Send`/`发送`)
+2. **Click listener** - Detects send button clicks:
+   - Primary: `button.send-button` class (language-independent)
+   - Fallback: `aria-label` matching (`Send`/`发送`)
 3. **Cooldown** - 1-second debounce prevents double-counting
 
 ### Data Storage (Tampermonkey GM APIs)
@@ -95,10 +97,17 @@ Extracts Google account email from DOM elements (`img[alt*="@"]`, `button[aria-l
   1. `button.input-area-switch` — primary (Gemini 3 UI, text: Fast/Thinking/Pro)
   2. `[data-test-id="bard-mode-menu-button"]` — fallback (DIV variant)
   3. `.bard-mode-list-button.is-selected` — menu open state
-- **MODEL_DETECT_MAP**: 快速/Fast/Flash → flash, 思考/Thinking → thinking, Pro → pro
+- **MODEL_DETECT_MAP**: EN/ZH/JA/KO covered — Fast/快速/高速/빠른 → flash, Thinking/思考/사고 → thinking, Pro → pro
+- **MODEL_CONFIG labels**: 3 Flash (non-thinking), 3 Flash Thinking, 3 Pro
 - **Account Type**: Detects Pro/Ultra badge via `button.gds-pillbox-button` or `button.pillbox-btn`
 - **Quota System**: Configurable daily message limit with visual progress bar
 - **Model Multipliers**: Flash (0x), Thinking (0.33x), Pro (1x) - currently simplified to raw count
+
+### Multi-language Compatibility
+- **Send button**: Uses `button.send-button` class (language-independent) as primary, `aria-label` as fallback
+- **User detection**: Uses `@` symbol matching (universal in email addresses)
+- **Model detection**: Text mapped via `MODEL_DETECT_MAP` — EN/ZH/JA/KO covered; other locales fall back to current model
+- **Account type**: "PRO"/"ULTRA" are brand names, likely universal across locales
 
 ## Testing
 
