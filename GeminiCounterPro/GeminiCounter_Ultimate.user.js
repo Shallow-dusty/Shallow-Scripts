@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.10)
+// @name         Gemini Counter Ultimate (v8.11)
 // @namespace    http://tampermonkey.net/
-// @version      8.10
+// @version      8.11
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.10 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.11 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -2791,6 +2791,182 @@ function filterLogs(entries, opts) {
     ModuleRegistry.register(BatchDeleteModule);
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║                    QUOTE REPLY MODULE (引用回复模块)                        ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
+
+    const QuoteReplyModule = {
+        id: 'quote-reply',
+        name: '引用回复',
+        description: '选中文本后快速插入引用到输入框',
+        icon: '💬',
+        defaultEnabled: false,
+
+        _fab: null,
+        _boundMouseUp: null,
+        _boundMouseDown: null,
+
+        init() {
+            this._boundMouseUp = this._onMouseUp.bind(this);
+            this._boundMouseDown = this._onMouseDown.bind(this);
+            document.addEventListener('mouseup', this._boundMouseUp, true);
+            document.addEventListener('mousedown', this._boundMouseDown, true);
+            Logger.info('QuoteReplyModule initialized');
+        },
+
+        destroy() {
+            if (this._boundMouseUp) {
+                document.removeEventListener('mouseup', this._boundMouseUp, true);
+                this._boundMouseUp = null;
+            }
+            if (this._boundMouseDown) {
+                document.removeEventListener('mousedown', this._boundMouseDown, true);
+                this._boundMouseDown = null;
+            }
+            this._removeFab();
+        },
+
+        onUserChange() {},
+
+        _onMouseDown(e) {
+            // If clicking the FAB itself, don't remove it
+            if (this._fab && this._fab.contains(e.target)) return;
+            this._removeFab();
+        },
+
+        _onMouseUp(e) {
+            // Delay slightly to let browser finalize selection
+            setTimeout(() => {
+                const sel = window.getSelection();
+                if (!sel || sel.isCollapsed || !sel.toString().trim()) {
+                    return;
+                }
+
+                // Only show for text within the main chat area (not our panel)
+                const range = sel.getRangeAt(0);
+                const container = range.commonAncestorContainer;
+                const el = container.nodeType === 3 ? container.parentElement : container;
+                if (!el) return;
+
+                // Skip if selection is in our panel or in the editor
+                if (el.closest('#' + PANEL_ID)) return;
+                if (el.closest('.ql-editor')) return;
+
+                const text = sel.toString().trim();
+                if (!text || text.length < 2) return;
+
+                this._showFab(e.clientX, e.clientY, text);
+            }, 50);
+        },
+
+        _showFab(x, y, text) {
+            this._removeFab();
+
+            const fab = document.createElement('div');
+            fab.style.cssText = [
+                'position:fixed',
+                'z-index:2147483646',
+                'background:var(--accent, #8ab4f8)',
+                'color:#fff',
+                'padding:4px 10px',
+                'border-radius:14px',
+                'font-size:12px',
+                'font-weight:600',
+                'cursor:pointer',
+                'box-shadow:0 2px 8px rgba(0,0,0,0.3)',
+                'user-select:none',
+                'transition:opacity 0.15s, transform 0.15s',
+                'opacity:0',
+                'transform:scale(0.9)'
+            ].join(';');
+            fab.textContent = '💬 Quote';
+
+            // Position near cursor, clamped to viewport
+            const fabW = 80;
+            const fabH = 28;
+            let left = Math.min(x + 8, window.innerWidth - fabW - 10);
+            let top = Math.max(y - fabH - 8, 10);
+            fab.style.left = left + 'px';
+            fab.style.top = top + 'px';
+
+            fab.onclick = (e) => {
+                e.stopPropagation();
+                this._insertQuote(text);
+                this._removeFab();
+            };
+
+            document.body.appendChild(fab);
+            this._fab = fab;
+
+            // Animate in
+            requestAnimationFrame(() => {
+                fab.style.opacity = '1';
+                fab.style.transform = 'scale(1)';
+            });
+
+            // Auto-dismiss after 5 seconds
+            setTimeout(() => {
+                if (this._fab === fab) this._removeFab();
+            }, 5000);
+        },
+
+        _removeFab() {
+            if (this._fab) {
+                this._fab.remove();
+                this._fab = null;
+            }
+        },
+
+        _insertQuote(text) {
+            const editor = document.querySelector('div.ql-editor[contenteditable="true"]');
+            if (!editor) {
+                Logger.warn('QuoteReply: editor not found');
+                return;
+            }
+
+            // Format as blockquote: each line prefixed with >
+            const quoted = text.split('\n').map(line => '> ' + line).join('\n');
+            const fullText = quoted + '\n\n';
+
+            // Check if editor is empty (has only placeholder)
+            const isBlank = editor.classList.contains('ql-blank') ||
+                            (editor.textContent.trim() === '' && editor.children.length <= 1);
+
+            if (isBlank) {
+                editor.replaceChildren();
+                editor.classList.remove('ql-blank');
+            }
+
+            // Insert quoted text as paragraphs
+            const lines = fullText.split('\n');
+            lines.forEach(line => {
+                const p = document.createElement('p');
+                if (line === '') {
+                    p.appendChild(document.createElement('br'));
+                } else {
+                    p.textContent = line;
+                }
+                editor.appendChild(p);
+            });
+
+            // Dispatch input event to notify Gemini's framework
+            editor.dispatchEvent(new Event('input', { bubbles: true }));
+            editor.focus();
+
+            // Place cursor at end
+            const sel = window.getSelection();
+            const range = document.createRange();
+            range.selectNodeContents(editor);
+            range.collapse(false);
+            sel.removeAllRanges();
+            sel.addRange(range);
+
+            Logger.info('Quote inserted', { length: text.length });
+        }
+    };
+
+    ModuleRegistry.register(QuoteReplyModule);
+
+    // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                          PANEL UI (面板界面)                               ║
     // ╚══════════════════════════════════════════════════════════════════════════╝
 
@@ -3924,7 +4100,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.10 (Modular)';
+            version.textContent = 'Gemini Assistant v8.11 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
