@@ -1,5 +1,18 @@
 # 📜 Gemini Counter Pro - Changelog
 
+### 📦 v8.x Series: Full Feature Platform (全功能平台)
+
+#### **v8.0**
+
+> _2026/02/10_
+
+- **⚖️ Precise Quota Tracking**: `dailyCounts` 新增 `byModel` 字段，每条消息记录所用模型 (Flash/Thinking/Pro)
+- **📊 Weighted Quota**: 配额栏改用加权值计算 (Flash: 0x, Thinking: 0.33x, Pro: 1x)，显示 `"N msgs (M weighted) / limit"`
+- **🔢 Model Breakdown**: 详情面板统计区新增今日模型分布 (三色圆点 + 计数)
+- **🧪 Quota Tests**: 新增 `lib/quota_calc.js` 可测试模块，28 个测试用例，100% 覆盖率
+
+---
+
 ### 📦 v7.x Series: Modular Architecture (模块化架构)
 
 #### **v7.8**

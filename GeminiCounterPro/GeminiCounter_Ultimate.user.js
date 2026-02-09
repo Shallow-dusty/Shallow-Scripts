@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v7.8)
+// @name         Gemini Counter Ultimate (v8.0)
 // @namespace    http://tampermonkey.net/
-// @version      7.8
+// @version      8.0
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v7.8 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.0 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -548,7 +548,11 @@ function filterLogs(entries, opts) {
         ensureTodayEntry() {
             const today = Core.getDayKey(this.resetHour);
             if (!this.state.dailyCounts[today]) {
-                this.state.dailyCounts[today] = { messages: 0, chats: 0 };
+                this.state.dailyCounts[today] = { messages: 0, chats: 0, byModel: { flash: 0, thinking: 0, pro: 0 } };
+            }
+            // Backfill byModel for entries created by older versions
+            if (!this.state.dailyCounts[today].byModel) {
+                this.state.dailyCounts[today].byModel = { flash: 0, thinking: 0, pro: 0 };
             }
             return today;
         },
@@ -558,6 +562,19 @@ function filterLogs(entries, opts) {
             return this.state.dailyCounts[today]?.messages || 0;
         },
 
+        getTodayByModel() {
+            const today = Core.getDayKey(this.resetHour);
+            return this.state.dailyCounts[today]?.byModel || { flash: 0, thinking: 0, pro: 0 };
+        },
+
+        getWeightedQuota() {
+            const bm = this.getTodayByModel();
+            return Object.keys(bm).reduce((sum, key) => {
+                const mult = this.MODEL_CONFIG[key]?.multiplier ?? 1;
+                return sum + (bm[key] * mult);
+            }, 0);
+        },
+
         attemptIncrement() {
             const now = Date.now();
             if (now - this.lastCountTime < this.COOLDOWN) return;
@@ -565,6 +582,11 @@ function filterLogs(entries, opts) {
             const today = this.ensureTodayEntry();
             this.state.total++;
             this.state.dailyCounts[today].messages++;
+            // Track model usage
+            const model = this.currentModel || 'flash';
+            if (this.state.dailyCounts[today].byModel) {
+                this.state.dailyCounts[today].byModel[model] = (this.state.dailyCounts[today].byModel[model] || 0) + 1;
+            }
             this.lastCountTime = now;
 
             const cid = Core.getChatId();
@@ -717,6 +739,7 @@ function filterLogs(entries, opts) {
                 const today = Core.getDayKey(this.resetHour);
                 if (this.state.dailyCounts[today]) {
                     this.state.dailyCounts[today].messages = 0;
+                    this.state.dailyCounts[today].byModel = { flash: 0, thinking: 0, pro: 0 };
                 }
             } else if (this.state.viewMode === 'chat') {
                 const cid = Core.getChatId();
@@ -1928,6 +1951,32 @@ function filterLogs(entries, opts) {
             pane.appendChild(this.createRow('Chats Created', 'chatsCreated', cm.state.totalChatsCreated));
             pane.appendChild(this.createRow('Lifetime', 'total', cm.state.total));
 
+            // Model Breakdown (today)
+            const byModel = cm.getTodayByModel();
+            const hasModelData = byModel.flash || byModel.thinking || byModel.pro;
+            if (hasModelData) {
+                const modelRow = document.createElement('div');
+                modelRow.className = 'detail-row model-breakdown';
+                modelRow.style.cssText = 'display: flex; gap: 10px; font-size: 10px; padding: 4px 8px; color: var(--text-sub);';
+                const models = [
+                    { key: 'flash', label: 'Flash', color: '#34a853' },
+                    { key: 'thinking', label: 'Think', color: '#fbbc04' },
+                    { key: 'pro', label: 'Pro', color: '#ea4335' }
+                ];
+                models.forEach(m => {
+                    const span = document.createElement('span');
+                    span.style.cssText = 'display: flex; align-items: center; gap: 3px;';
+                    const dot = document.createElement('span');
+                    dot.style.cssText = `width: 6px; height: 6px; border-radius: 50%; background: ${m.color}; display: inline-block;`;
+                    const num = document.createElement('span');
+                    num.textContent = byModel[m.key] || 0;
+                    span.appendChild(dot);
+                    span.appendChild(num);
+                    modelRow.appendChild(span);
+                });
+                pane.appendChild(modelRow);
+            }
+
             // Profiles
             pane.appendChild(this.createSectionTitle('Profiles'));
             const users = Core.getAllUsers();
@@ -2144,12 +2193,14 @@ function filterLogs(entries, opts) {
             // Quota bar
             if (quotaFill && quotaLabel) {
                 const used = cm.getTodayMessages();
-                const pct = Math.min((used / cm.quotaLimit) * 100, 100);
+                const weighted = cm.getWeightedQuota();
+                const pct = Math.min((weighted / cm.quotaLimit) * 100, 100);
                 quotaFill.style.width = pct + '%';
                 if (pct < 60) quotaFill.style.background = '#34a853';
                 else if (pct < 85) quotaFill.style.background = '#fbbc04';
                 else quotaFill.style.background = '#ea4335';
-                quotaLabel.textContent = `${used} / ${cm.quotaLimit} msgs`;
+                const weightedStr = weighted % 1 === 0 ? String(weighted) : weighted.toFixed(1);
+                quotaLabel.textContent = `${used} msgs (${weightedStr} weighted) / ${cm.quotaLimit}`;
             }
 
             // Action button
@@ -2569,7 +2620,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v7.8 (Modular)';
+            version.textContent = 'Gemini Assistant v8.0 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
