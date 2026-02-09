@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.2)
+// @name         Gemini Counter Ultimate (v8.3)
 // @namespace    http://tampermonkey.net/
-// @version      8.2
+// @version      8.3
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.2 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.3 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -952,7 +952,9 @@ function filterLogs(entries, opts) {
         },
         observer: null,
         chatCache: [],          // 缓存扫描到的聊天项
-        dragState: null,
+        dragState: null,        // Chat drag state: { chatId, chatTitle }
+        folderDragState: null,  // Folder reorder state: { folderId }
+        uncategorizedCollapsed: false,
 
         // --- 生命周期 ---
         init() {
@@ -1085,6 +1087,17 @@ function filterLogs(entries, opts) {
             }
             this.saveData();
             this.markSidebarChats();
+            PanelUI.renderDetailsPane();
+        },
+
+        reorderFolder(draggedId, targetId, position) {
+            const order = this.data.folderOrder.filter(id => id !== draggedId);
+            const targetIdx = order.indexOf(targetId);
+            if (targetIdx === -1) return;
+            const insertIdx = position === 'before' ? targetIdx : targetIdx + 1;
+            order.splice(insertIdx, 0, draggedId);
+            this.data.folderOrder = order;
+            this.saveData();
             PanelUI.renderDetailsPane();
         },
 
@@ -1410,6 +1423,39 @@ function filterLogs(entries, opts) {
                 .gf-drop-highlight {
                     background: rgba(138, 180, 248, 0.15) !important;
                 }
+
+                /* Folder drag reorder */
+                .gf-folder-row[draggable="true"] {
+                    cursor: grab;
+                }
+                .gf-folder-row.dragging {
+                    opacity: 0.4;
+                }
+                .gf-folder-row.drag-above {
+                    border-top: 2px solid var(--accent, #8ab4f8);
+                }
+                .gf-folder-row.drag-below {
+                    border-bottom: 2px solid var(--accent, #8ab4f8);
+                }
+
+                /* Uncategorized section */
+                .gf-uncategorized-header {
+                    display: flex;
+                    align-items: center;
+                    gap: 6px;
+                    padding: 6px 8px;
+                    margin-top: 6px;
+                    font-size: 10px;
+                    color: var(--text-sub, #9aa0a6);
+                    opacity: 0.7;
+                    cursor: pointer;
+                    border-radius: 6px;
+                    transition: background 0.2s;
+                }
+                .gf-uncategorized-header:hover {
+                    background: var(--row-hover, rgba(255, 255, 255, 0.08));
+                    opacity: 1;
+                }
             `);
         },
 
@@ -1451,6 +1497,67 @@ function filterLogs(entries, opts) {
                 });
             }
 
+            // Uncategorized chats section
+            const assignedChatIds = new Set(
+                Object.entries(this.data.chatToFolder)
+                    .filter(([, fid]) => this.data.folders[fid])
+                    .map(([cid]) => cid)
+            );
+            const uncategorized = this.chatCache.filter(chat => !assignedChatIds.has(chat.id));
+
+            if (uncategorized.length > 0) {
+                const uncatHeader = document.createElement('div');
+                uncatHeader.className = 'gf-uncategorized-header';
+                const uncatToggle = document.createElement('span');
+                uncatToggle.textContent = this.uncategorizedCollapsed ? '▶' : '▼';
+                uncatToggle.style.fontSize = '8px';
+                const uncatLabel = document.createElement('span');
+                uncatLabel.textContent = `Uncategorized (${uncategorized.length})`;
+                uncatHeader.appendChild(uncatToggle);
+                uncatHeader.appendChild(uncatLabel);
+                uncatHeader.onclick = (e) => {
+                    e.stopPropagation();
+                    this.uncategorizedCollapsed = !this.uncategorizedCollapsed;
+                    PanelUI.renderDetailsPane();
+                };
+                container.appendChild(uncatHeader);
+
+                if (!this.uncategorizedCollapsed) {
+                    uncategorized.forEach(chat => {
+                        const chatRow = document.createElement('div');
+                        chatRow.className = 'gf-chat-row';
+                        chatRow.setAttribute('draggable', 'true');
+                        chatRow.ondragstart = (e) => {
+                            this.dragState = { chatId: chat.id, chatTitle: chat.title };
+                            e.dataTransfer.effectAllowed = 'move';
+                            e.dataTransfer.setData('text/plain', chat.id);
+                            chatRow.style.opacity = '0.5';
+                        };
+                        chatRow.ondragend = () => {
+                            chatRow.style.opacity = '';
+                            this.dragState = null;
+                        };
+
+                        const chatTitle = document.createElement('span');
+                        chatTitle.className = 'gf-chat-title';
+                        chatTitle.textContent = chat.title.length > 20 ? chat.title.slice(0, 20) + '...' : chat.title;
+                        chatTitle.title = chat.title;
+                        chatRow.appendChild(chatTitle);
+
+                        chatRow.onclick = (e) => {
+                            e.stopPropagation();
+                            if (chat.element && chat.element.click) {
+                                chat.element.click();
+                            } else {
+                                window.location.href = chat.href;
+                            }
+                        };
+
+                        container.appendChild(chatRow);
+                    });
+                }
+            }
+
             // Add folder button
             const addBtn = document.createElement('button');
             addBtn.className = 'gf-add-btn';
@@ -1469,6 +1576,25 @@ function filterLogs(entries, opts) {
             // Folder header row
             const row = document.createElement('div');
             row.className = `gf-folder-row ${folder.collapsed ? 'collapsed' : ''}`;
+            row.setAttribute('draggable', 'true');
+            row.dataset.folderId = folderId;
+
+            // Folder drag reorder
+            row.ondragstart = (e) => {
+                // Only start folder drag if not dragging a chat
+                if (this.dragState) return;
+                this.folderDragState = { folderId };
+                e.dataTransfer.effectAllowed = 'move';
+                e.dataTransfer.setData('text/plain', 'folder:' + folderId);
+                row.classList.add('dragging');
+            };
+            row.ondragend = () => {
+                row.classList.remove('dragging');
+                this.folderDragState = null;
+                document.querySelectorAll('.gf-folder-row').forEach(el => {
+                    el.classList.remove('drag-above', 'drag-below');
+                });
+            };
 
             // Color dot
             const dot = document.createElement('div');
@@ -1530,18 +1656,36 @@ function filterLogs(entries, opts) {
                 this.toggleFolderCollapse(folderId);
             };
 
-            // Drag & Drop
+            // Drag & Drop (chat into folder + folder reorder)
             row.ondragover = (e) => {
                 e.preventDefault();
-                row.classList.add('drop-active');
+                if (this.folderDragState && this.folderDragState.folderId !== folderId) {
+                    // Folder reorder: show position indicator
+                    const rect = row.getBoundingClientRect();
+                    const mid = rect.top + rect.height / 2;
+                    row.classList.remove('drag-above', 'drag-below', 'drop-active');
+                    if (e.clientY < mid) {
+                        row.classList.add('drag-above');
+                    } else {
+                        row.classList.add('drag-below');
+                    }
+                } else if (this.dragState) {
+                    // Chat drop into folder
+                    row.classList.add('drop-active');
+                }
             };
             row.ondragleave = () => {
-                row.classList.remove('drop-active');
+                row.classList.remove('drop-active', 'drag-above', 'drag-below');
             };
             row.ondrop = (e) => {
                 e.preventDefault();
-                row.classList.remove('drop-active');
-                if (this.dragState) {
+                const wasAbove = row.classList.contains('drag-above');
+                row.classList.remove('drop-active', 'drag-above', 'drag-below');
+                if (this.folderDragState && this.folderDragState.folderId !== folderId) {
+                    // Folder reorder
+                    this.reorderFolder(this.folderDragState.folderId, folderId, wasAbove ? 'before' : 'after');
+                } else if (this.dragState) {
+                    // Chat drop
                     this.moveChatToFolder(this.dragState.chatId, folderId);
                 }
             };
@@ -2788,7 +2932,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.2 (Modular)';
+            version.textContent = 'Gemini Assistant v8.3 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
