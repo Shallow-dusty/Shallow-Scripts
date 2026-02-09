@@ -2,6 +2,15 @@
 
 ### 📦 v8.x Series: Full Feature Platform (全功能平台)
 
+#### **v8.2**
+
+> _2026/02/10_
+
+- **📄 Paper Theme Overhaul**: 全面优化 Paper 浅色主题，新增 9 个 CSS 变量覆盖所有 UI 组件
+- **🎨 Theme Variables Expansion**: 所有主题新增 `--header-bg`, `--header-border`, `--detail-bg`, `--overlay-tint`, `--input-bg`, `--divider`, `--badge-bg`, `--scrollbar-thumb`, `--code-bg`
+- **🔧 Hardcoded CSS Cleanup**: 将 30+ 处硬编码 `rgba(255,255,255,...)` 替换为 CSS 变量，确保浅色/深色主题均正确渲染
+- **🧩 Module CSS Compat**: FoldersModule 模态框、Dashboard、Debug 面板、Settings 等全部组件适配新变量系统
+
 #### **v8.1**
 
 > _2026/02/10_

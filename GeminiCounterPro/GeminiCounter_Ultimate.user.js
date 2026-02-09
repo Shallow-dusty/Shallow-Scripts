@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.1)
+// @name         Gemini Counter Ultimate (v8.2)
 // @namespace    http://tampermonkey.net/
-// @version      8.1
+// @version      8.2
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.1 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.2 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -38,7 +38,16 @@
                 '--accent': '#8ab4f8',
                 '--btn-bg': 'rgba(255, 255, 255, 0.06)',
                 '--row-hover': 'rgba(255, 255, 255, 0.08)',
-                '--shadow': '0 8px 32px 0 rgba(0, 0, 0, 0.37)'
+                '--shadow': '0 8px 32px 0 rgba(0, 0, 0, 0.37)',
+                '--header-bg': 'rgba(255, 255, 255, 0.03)',
+                '--header-border': 'rgba(255, 255, 255, 0.05)',
+                '--detail-bg': 'rgba(0, 0, 0, 0.1)',
+                '--overlay-tint': 'rgba(0, 0, 0, 0.6)',
+                '--input-bg': 'rgba(255, 255, 255, 0.05)',
+                '--divider': 'rgba(255, 255, 255, 0.05)',
+                '--badge-bg': 'rgba(255, 255, 255, 0.06)',
+                '--scrollbar-thumb': 'rgba(255, 255, 255, 0.15)',
+                '--code-bg': 'rgba(0, 0, 0, 0.3)'
             }
         },
         cyber: {
@@ -53,22 +62,40 @@
                 '--accent': '#00ff41',
                 '--btn-bg': '#0d0d0d',
                 '--row-hover': '#1a1a1a',
-                '--shadow': '0 0 15px rgba(0, 255, 65, 0.2)'
+                '--shadow': '0 0 15px rgba(0, 255, 65, 0.2)',
+                '--header-bg': 'rgba(0, 255, 65, 0.03)',
+                '--header-border': 'rgba(0, 255, 65, 0.1)',
+                '--detail-bg': 'rgba(0, 0, 0, 0.3)',
+                '--overlay-tint': 'rgba(0, 0, 0, 0.7)',
+                '--input-bg': '#0d0d0d',
+                '--divider': 'rgba(0, 255, 65, 0.08)',
+                '--badge-bg': 'rgba(0, 255, 65, 0.08)',
+                '--scrollbar-thumb': 'rgba(0, 255, 65, 0.2)',
+                '--code-bg': 'rgba(0, 0, 0, 0.5)'
             }
         },
         paper: {
             name: "📄 Paper",
             vars: {
-                '--bg': 'rgba(250, 250, 250, 0.88)',
-                '--blur': '12px',
+                '--bg': 'rgba(255, 253, 248, 0.92)',
+                '--blur': '14px',
                 '--saturate': '120%',
-                '--border': 'rgba(0, 0, 0, 0.08)',
-                '--text-main': '#1967d2',
+                '--border': 'rgba(0, 0, 0, 0.1)',
+                '--text-main': '#1a1a1a',
                 '--text-sub': '#5f6368',
-                '--accent': '#1967d2',
+                '--accent': '#1a73e8',
                 '--btn-bg': 'rgba(0, 0, 0, 0.04)',
                 '--row-hover': 'rgba(0, 0, 0, 0.06)',
-                '--shadow': '0 4px 16px rgba(60, 64, 67, 0.12)'
+                '--shadow': '0 2px 12px rgba(60, 64, 67, 0.15), 0 1px 4px rgba(60, 64, 67, 0.1)',
+                '--header-bg': 'rgba(0, 0, 0, 0.02)',
+                '--header-border': 'rgba(0, 0, 0, 0.06)',
+                '--detail-bg': 'rgba(0, 0, 0, 0.03)',
+                '--overlay-tint': 'rgba(0, 0, 0, 0.35)',
+                '--input-bg': 'rgba(0, 0, 0, 0.04)',
+                '--divider': 'rgba(0, 0, 0, 0.06)',
+                '--badge-bg': 'rgba(0, 0, 0, 0.05)',
+                '--scrollbar-thumb': 'rgba(0, 0, 0, 0.15)',
+                '--code-bg': 'rgba(0, 0, 0, 0.04)'
             }
         }
     };
@@ -1173,7 +1200,7 @@ function filterLogs(entries, opts) {
                     left: 0;
                     width: 100vw;
                     height: 100vh;
-                    background: rgba(0, 0, 0, 0.6);
+                    background: var(--overlay-tint, rgba(0, 0, 0, 0.6));
                     z-index: 2147483646;
                     display: flex;
                     align-items: center;
@@ -1198,7 +1225,7 @@ function filterLogs(entries, opts) {
                     padding: 10px 12px;
                     border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
                     border-radius: 8px;
-                    background: rgba(255, 255, 255, 0.05);
+                    background: var(--input-bg, rgba(255, 255, 255, 0.05));
                     color: var(--text-main, #e8eaed);
                     font-size: 14px;
                     margin-bottom: 12px;
@@ -1246,7 +1273,7 @@ function filterLogs(entries, opts) {
                     color: #000;
                 }
                 .gf-modal-btn.secondary {
-                    background: rgba(255, 255, 255, 0.1);
+                    background: var(--btn-bg, rgba(255, 255, 255, 0.1));
                     color: var(--text-main, #e8eaed);
                 }
                 .gf-modal-btn.danger {
@@ -1364,7 +1391,7 @@ function filterLogs(entries, opts) {
                     gap: 4px;
                     padding: 6px;
                     margin-top: 4px;
-                    border: 1px dashed rgba(255, 255, 255, 0.15);
+                    border: 1px dashed var(--divider, rgba(255, 255, 255, 0.15));
                     border-radius: 6px;
                     background: transparent;
                     color: var(--text-sub, #9aa0a6);
@@ -1374,8 +1401,8 @@ function filterLogs(entries, opts) {
                     width: 100%;
                 }
                 .gf-add-btn:hover {
-                    background: rgba(255, 255, 255, 0.05);
-                    border-color: rgba(255, 255, 255, 0.25);
+                    background: var(--input-bg, rgba(255, 255, 255, 0.05));
+                    border-color: var(--border, rgba(255, 255, 255, 0.25));
                     color: var(--text-main, #e8eaed);
                 }
 
@@ -1676,21 +1703,21 @@ function filterLogs(entries, opts) {
                 }
                 .gemini-header {
                     padding: 8px 14px; cursor: grab;
-                    background: rgba(255, 255, 255, 0.03);
-                    border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+                    background: var(--header-bg, rgba(255, 255, 255, 0.03));
+                    border-bottom: 1px solid var(--header-border, rgba(255, 255, 255, 0.05));
                     display: flex; align-items: center; justify-content: space-between; height: 32px;
                 }
                 .user-capsule {
                     display: flex; align-items: center; gap: 4px;
                     font-size: 10px; color: var(--text-sub);
-                    background: rgba(255,255,255,0.05);
+                    background: var(--badge-bg, rgba(255,255,255,0.05));
                     padding: 2px 8px; border-radius: 12px; border: 1px solid transparent;
                     max-width: 120px; overflow: hidden;
                 }
                 .acct-badge-inline {
                     font-size: 8px; font-weight: 600; letter-spacing: 0.4px;
                     padding: 1px 5px; border-radius: 10px;
-                    background: rgba(255,255,255,0.06);
+                    background: var(--badge-bg, rgba(255,255,255,0.06));
                     color: var(--text-sub);
                     text-transform: uppercase;
                     flex-shrink: 0;
@@ -1732,7 +1759,7 @@ function filterLogs(entries, opts) {
                     font-size: 9px; font-weight: 700; letter-spacing: 0.6px;
                     padding: 2px 7px; border-radius: 6px;
                     line-height: 1.4;
-                    border: 1px solid rgba(255,255,255,0.15);
+                    border: 1px solid var(--divider, rgba(255,255,255,0.15));
                 }
                 .quota-bar-wrap {
                     margin: 6px 0 8px; height: 4px; border-radius: 2px;
@@ -1754,7 +1781,7 @@ function filterLogs(entries, opts) {
                     font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                 }
                 .gemini-details-view {
-                    height: 0; opacity: 0; overflow: hidden; background: rgba(0,0,0,0.1);
+                    height: 0; opacity: 0; overflow: hidden; background: var(--detail-bg, rgba(0,0,0,0.1));
                     padding: 0 12px;
                     transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
                 }
@@ -1787,7 +1814,7 @@ function filterLogs(entries, opts) {
                 /* Settings Modal */
                 .settings-overlay {
                     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                    background: rgba(0,0,0,0.6); z-index: 2147483646;
+                    background: var(--overlay-tint, rgba(0,0,0,0.6)); z-index: 2147483646;
                     display: flex; align-items: center; justify-content: center;
                 }
                 .settings-modal {
@@ -1797,7 +1824,7 @@ function filterLogs(entries, opts) {
                     font-family: 'Google Sans', Roboto, sans-serif;
                 }
                 .settings-header {
-                    padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.1);
+                    padding: 12px 16px; border-bottom: 1px solid var(--divider, rgba(255,255,255,0.1));
                     display: flex; justify-content: space-between; align-items: center;
                 }
                 .settings-header h3 { margin: 0; font-size: 14px; color: var(--text-main, #fff); font-weight: 500; }
@@ -1808,7 +1835,7 @@ function filterLogs(entries, opts) {
                 .settings-section-title { font-size: 10px; color: var(--text-sub, #9aa0a6); text-transform: uppercase; letter-spacing: 1px; margin-bottom: 8px; }
                 .settings-row {
                     display: flex; justify-content: space-between; align-items: center;
-                    padding: 8px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+                    padding: 8px 0; border-bottom: 1px solid var(--divider, rgba(255,255,255,0.05));
                 }
                 .settings-row:last-child { border-bottom: none; }
                 .settings-label { font-size: 12px; color: var(--text-main, #fff); }
@@ -1828,7 +1855,7 @@ function filterLogs(entries, opts) {
                 /* Debug Modal */
                 .debug-overlay {
                     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                    background: rgba(0,0,0,0.6); z-index: 2147483646;
+                    background: var(--overlay-tint, rgba(0,0,0,0.6)); z-index: 2147483646;
                     display: flex; align-items: center; justify-content: center;
                 }
                 .debug-modal {
@@ -1838,7 +1865,7 @@ function filterLogs(entries, opts) {
                     font-family: 'Google Sans', Roboto, sans-serif;
                 }
                 .debug-header {
-                    padding: 12px 16px; border-bottom: 1px solid rgba(255,255,255,0.1);
+                    padding: 12px 16px; border-bottom: 1px solid var(--divider, rgba(255,255,255,0.1));
                     display: flex; justify-content: space-between; align-items: center;
                 }
                 .debug-header h3 { margin: 0; font-size: 14px; color: var(--text-main, #fff); font-weight: 500; }
@@ -1849,24 +1876,24 @@ function filterLogs(entries, opts) {
                 .debug-kv strong { color: var(--text-main); font-weight: 500; }
                 .debug-actions { display: grid; grid-template-columns: repeat(2, 1fr); gap: 8px; }
                 .debug-log-list {
-                    background: rgba(0,0,0,0.3); border: 1px solid rgba(255,255,255,0.08);
+                    background: var(--code-bg, rgba(0,0,0,0.3)); border: 1px solid var(--divider, rgba(255,255,255,0.08));
                     border-radius: 8px; padding: 8px; max-height: 240px; overflow: auto;
                     font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
                     font-size: 10px; color: var(--text-sub);
                 }
-                .debug-log-item { padding: 2px 0; border-bottom: 1px dashed rgba(255,255,255,0.05); }
+                .debug-log-item { padding: 2px 0; border-bottom: 1px dashed var(--divider, rgba(255,255,255,0.05)); }
                 .debug-log-item:last-child { border-bottom: none; }
                 .debug-filter-row { display: flex; gap: 6px; flex-wrap: wrap; }
                 .debug-filter-btn {
                     font-size: 10px; padding: 4px 8px; border-radius: 6px;
-                    border: 1px solid rgba(255,255,255,0.1);
-                    background: rgba(255,255,255,0.05);
+                    border: 1px solid var(--divider, rgba(255,255,255,0.1));
+                    background: var(--input-bg, rgba(255,255,255,0.05));
                     color: var(--text-sub); cursor: pointer;
                 }
                 .debug-filter-btn.active { color: var(--text-main); border-color: var(--accent); }
                 .debug-search {
-                    background: rgba(0,0,0,0.3);
-                    border: 1px solid rgba(255,255,255,0.1);
+                    background: var(--code-bg, rgba(0,0,0,0.3));
+                    border: 1px solid var(--divider, rgba(255,255,255,0.1));
                     color: var(--text-main); border-radius: 6px; padding: 4px 8px;
                     font-size: 10px; width: 100%;
                 }
@@ -1879,7 +1906,7 @@ function filterLogs(entries, opts) {
                 /* Module Toggle */
                 .module-toggle-row {
                     display: flex; justify-content: space-between; align-items: center;
-                    padding: 10px 0; border-bottom: 1px solid rgba(255,255,255,0.05);
+                    padding: 10px 0; border-bottom: 1px solid var(--divider, rgba(255,255,255,0.05));
                 }
                 .module-info { display: flex; align-items: center; gap: 8px; }
                 .module-icon { font-size: 16px; }
@@ -1888,7 +1915,7 @@ function filterLogs(entries, opts) {
                 .module-desc { font-size: 9px; color: var(--text-sub, #9aa0a6); opacity: 0.7; }
                 .toggle-switch {
                     position: relative; width: 36px; height: 20px;
-                    background: rgba(255,255,255,0.1); border-radius: 10px;
+                    background: var(--btn-bg, rgba(255,255,255,0.1)); border-radius: 10px;
                     cursor: pointer; transition: background 0.2s;
                 }
                 .toggle-switch.on { background: var(--accent, #8ab4f8); }
@@ -1902,7 +1929,7 @@ function filterLogs(entries, opts) {
                 /* --- Dashboard Styles --- */
                 .dash-overlay {
                     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                    background: rgba(0,0,0,0.85); z-index: 2147483645;
+                    background: var(--overlay-tint, rgba(0,0,0,0.85)); z-index: 2147483645;
                     display: flex; align-items: center; justify-content: center;
                     backdrop-filter: blur(5px);
                 }
@@ -1925,17 +1952,17 @@ function filterLogs(entries, opts) {
                 /* Metric Cards */
                 .metric-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 16px; }
                 .metric-card {
-                    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+                    background: var(--input-bg, rgba(255,255,255,0.03)); border: 1px solid var(--border);
                     border-radius: 16px; padding: 20px; text-align: center;
                     transition: transform 0.2s;
                 }
-                .metric-card:hover { transform: translateY(-2px); background: rgba(255,255,255,0.06); }
+                .metric-card:hover { transform: translateY(-2px); background: var(--row-hover, rgba(255,255,255,0.06)); }
                 .metric-val { font-size: 32px; color: var(--text-main); font-weight: 300; margin-bottom: 4px; }
                 .metric-label { font-size: 12px; color: var(--text-sub); text-transform: uppercase; letter-spacing: 1px; }
 
                 /* Heatmap */
                 .heatmap-container {
-                    background: rgba(255,255,255,0.03); border: 1px solid var(--border);
+                    background: var(--input-bg, rgba(255,255,255,0.03)); border: 1px solid var(--border);
                     border-radius: 16px; padding: 24px; overflow-x: auto;
                 }
                 .heatmap-title { font-size: 14px; color: var(--text-main); margin-bottom: 16px; display: flex; justify-content: space-between; }
@@ -1943,7 +1970,7 @@ function filterLogs(entries, opts) {
                 .heatmap-col { display: flex; flex-direction: column; gap: 4px; }
                 .heatmap-cell {
                     width: 12px; height: 12px; border-radius: 2px;
-                    background: rgba(255,255,255,0.1); position: relative;
+                    background: var(--btn-bg, rgba(255,255,255,0.1)); position: relative;
                 }
                 .heatmap-cell:hover { transform: scale(1.4); z-index: 10; border: 1px solid #fff; }
                 .heatmap-legend { display: flex; gap: 4px; align-items: center; font-size: 10px; color: var(--text-sub); }
@@ -1968,7 +1995,7 @@ function filterLogs(entries, opts) {
                 .g-tooltip.visible { opacity: 1; }
 
                 /* Level Colors */
-                .l-0 { background: rgba(255,255,255,0.05); }
+                .l-0 { background: var(--btn-bg, rgba(255,255,255,0.05)); }
                 .l-1 { background: rgba(138, 180, 248, 0.2); }
                 .l-2 { background: rgba(138, 180, 248, 0.4); }
                 .l-3 { background: rgba(138, 180, 248, 0.7); }
@@ -2761,7 +2788,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.1 (Modular)';
+            version.textContent = 'Gemini Assistant v8.2 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
