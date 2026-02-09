@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.3)
+// @name         Gemini Counter Ultimate (v8.4)
 // @namespace    http://tampermonkey.net/
-// @version      8.3
+// @version      8.4
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.3 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v8.4 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -1079,6 +1079,14 @@ function filterLogs(entries, opts) {
             }
         },
 
+        toggleFolderPin(folderId) {
+            if (this.data.folders[folderId]) {
+                this.data.folders[folderId].pinned = !this.data.folders[folderId].pinned;
+                this.saveData();
+                PanelUI.renderDetailsPane();
+            }
+        },
+
         moveChatToFolder(chatId, folderId) {
             if (folderId === null) {
                 delete this.data.chatToFolder[chatId];
@@ -1467,6 +1475,23 @@ function filterLogs(entries, opts) {
             title.textContent = 'Folders';
             container.appendChild(title);
 
+            // Search bar
+            const searchWrap = document.createElement('div');
+            searchWrap.style.cssText = 'margin-bottom: 6px;';
+            const searchInput = document.createElement('input');
+            searchInput.type = 'text';
+            searchInput.placeholder = '🔍 Search chats...';
+            searchInput.style.cssText = 'width: 100%; padding: 4px 8px; font-size: 10px; border-radius: 6px; border: 1px solid var(--divider, rgba(255,255,255,0.1)); background: var(--input-bg, rgba(255,255,255,0.05)); color: var(--text-main, #fff); box-sizing: border-box;';
+            searchInput.value = this._searchQuery || '';
+            searchInput.oninput = (e) => {
+                this._searchQuery = e.target.value;
+                PanelUI.renderDetailsPane();
+            };
+            searchWrap.appendChild(searchInput);
+            container.appendChild(searchWrap);
+
+            const query = (this._searchQuery || '').toLowerCase().trim();
+
             // 扫描当前聊天
             this.scanSidebarChats();
 
@@ -1480,6 +1505,13 @@ function filterLogs(entries, opts) {
                 }
             });
 
+            // Sort folder order: pinned first, then original order
+            const sortedFolderOrder = [...this.data.folderOrder].sort((a, b) => {
+                const aPinned = this.data.folders[a]?.pinned ? 1 : 0;
+                const bPinned = this.data.folders[b]?.pinned ? 1 : 0;
+                return bPinned - aPinned;
+            });
+
             // 渲染文件夹列表
             if (this.data.folderOrder.length === 0) {
                 const hint = document.createElement('div');
@@ -1487,11 +1519,17 @@ function filterLogs(entries, opts) {
                 hint.textContent = 'Drag chats here to organize';
                 container.appendChild(hint);
             } else {
-                this.data.folderOrder.forEach(folderId => {
+                sortedFolderOrder.forEach(folderId => {
                     const folder = this.data.folders[folderId];
                     if (!folder) return;
 
-                    const chats = chatsByFolder[folderId] || [];
+                    let chats = chatsByFolder[folderId] || [];
+                    // Apply search filter
+                    if (query) {
+                        chats = chats.filter(c => c.title.toLowerCase().includes(query));
+                        // Also match folder name
+                        if (!folder.name.toLowerCase().includes(query) && chats.length === 0) return;
+                    }
                     const folderEl = this.createFolderRow(folderId, folder, chats);
                     container.appendChild(folderEl);
                 });
@@ -1503,7 +1541,10 @@ function filterLogs(entries, opts) {
                     .filter(([, fid]) => this.data.folders[fid])
                     .map(([cid]) => cid)
             );
-            const uncategorized = this.chatCache.filter(chat => !assignedChatIds.has(chat.id));
+            let uncategorized = this.chatCache.filter(chat => !assignedChatIds.has(chat.id));
+            if (query) {
+                uncategorized = uncategorized.filter(c => c.title.toLowerCase().includes(query));
+            }
 
             if (uncategorized.length > 0) {
                 const uncatHeader = document.createElement('div');
@@ -1604,7 +1645,7 @@ function filterLogs(entries, opts) {
             // Name
             const label = document.createElement('span');
             label.className = 'gf-folder-label';
-            label.textContent = folder.name;
+            label.textContent = (folder.pinned ? '📌 ' : '') + folder.name;
 
             // Count badge
             const badge = document.createElement('span');
@@ -1640,6 +1681,16 @@ function filterLogs(entries, opts) {
                 }
             };
 
+            const pinBtn = document.createElement('span');
+            pinBtn.className = 'gf-folder-action';
+            pinBtn.textContent = folder.pinned ? '📌' : '📍';
+            pinBtn.title = folder.pinned ? 'Unpin' : 'Pin to top';
+            pinBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.toggleFolderPin(folderId);
+            };
+
+            actions.appendChild(pinBtn);
             actions.appendChild(editBtn);
             actions.appendChild(deleteBtn);
 
@@ -1767,9 +1818,31 @@ function filterLogs(entries, opts) {
                     colorsContainer.querySelectorAll('.gf-color-option').forEach(c => c.classList.remove('selected'));
                     colorBtn.classList.add('selected');
                     selectedColor = color;
+                    hexInput.value = color;
                 };
                 colorsContainer.appendChild(colorBtn);
             });
+
+            // Custom hex color input
+            const hexWrap = document.createElement('div');
+            hexWrap.style.cssText = 'display: flex; align-items: center; gap: 8px; margin-bottom: 16px;';
+            const hexLabel = document.createElement('span');
+            hexLabel.style.cssText = 'font-size: 11px; color: var(--text-sub, #9aa0a6);';
+            hexLabel.textContent = 'Custom:';
+            const hexInput = document.createElement('input');
+            hexInput.type = 'text';
+            hexInput.value = currentColor;
+            hexInput.placeholder = '#ff6600';
+            hexInput.style.cssText = 'flex: 1; padding: 6px 8px; font-size: 12px; border-radius: 6px; border: 1px solid var(--border, rgba(255,255,255,0.1)); background: var(--input-bg, rgba(255,255,255,0.05)); color: var(--text-main, #e8eaed); font-family: monospace; box-sizing: border-box;';
+            hexInput.oninput = () => {
+                const val = hexInput.value.trim();
+                if (/^#[0-9a-fA-F]{3,8}$/.test(val)) {
+                    selectedColor = val;
+                    colorsContainer.querySelectorAll('.gf-color-option').forEach(c => c.classList.remove('selected'));
+                }
+            };
+            hexWrap.appendChild(hexLabel);
+            hexWrap.appendChild(hexInput);
 
             const actionsDiv = document.createElement('div');
             actionsDiv.className = 'gf-modal-actions';
@@ -1810,6 +1883,7 @@ function filterLogs(entries, opts) {
             modal.appendChild(titleEl);
             modal.appendChild(input);
             modal.appendChild(colorsContainer);
+            modal.appendChild(hexWrap);
             modal.appendChild(actionsDiv);
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
@@ -2932,7 +3006,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.3 (Modular)';
+            version.textContent = 'Gemini Assistant v8.4 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
