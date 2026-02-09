@@ -2,6 +2,17 @@
 
 ### 📦 v8.x Series: Full Feature Platform (全功能平台)
 
+#### **v8.8**
+
+> _2026/02/10_
+
+- **💎 PromptVaultModule**: 新增 Prompt 金库模块，保存和快速插入常用 Prompt 模板
+- **📂 Category Grouping**: Prompt 按分类分组显示（General/Coding/Writing/Custom），折叠展开
+- **✏️ CRUD Editor**: 完整的新增/编辑/删除 Prompt 模态框，支持名称、分类、内容
+- **📋 Quick Insert**: 点击 Prompt 一键插入到 Gemini 输入框 (`div.ql-editor[contenteditable]`)
+- **📊 Usage Stats**: 记录每个 Prompt 的使用次数和最后使用时间
+- **🔌 Module Toggle**: 在 Feature Extensions 中启用/禁用，默认关闭
+
 #### **v8.7**
 
 > _2026/02/10_
