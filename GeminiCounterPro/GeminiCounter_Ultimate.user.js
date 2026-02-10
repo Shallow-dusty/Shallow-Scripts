@@ -348,7 +348,10 @@
             if (now.getHours() < resetHour) {
                 now.setDate(now.getDate() - 1);
             }
-            return now.toISOString().slice(0, 10);
+            const y = now.getFullYear();
+            const m = String(now.getMonth() + 1).padStart(2, '0');
+            const day = String(now.getDate()).padStart(2, '0');
+            return `${y}-${m}-${day}`;
         }
     };
 
@@ -759,7 +762,7 @@ function filterLogs(entries, opts) {
 
                 if (lastDate) {
                     const diff = (d - lastDate) / (1000 * 60 * 60 * 24);
-                    if (diff === 1) temp++;
+                    if (Math.round(diff) === 1) temp++;
                     else if (diff > 1) temp = 1;
                 } else {
                     temp = 1;
@@ -768,18 +771,20 @@ function filterLogs(entries, opts) {
                 lastDate = d;
             }
 
-            // Current streak
+            // Current streak (timezone-safe: use local date formatting)
             const todayStr = Core.getDayKey(this.resetHour);
             const todayDate = new Date();
             if (todayDate.getHours() < this.resetHour) todayDate.setDate(todayDate.getDate() - 1);
             todayDate.setDate(todayDate.getDate() - 1);
-            const yesterdayStr = todayDate.toISOString().slice(0, 10);
+            const _fmt = (dt) => { const yy = dt.getFullYear(); const mm = String(dt.getMonth()+1).padStart(2,'0'); const dd = String(dt.getDate()).padStart(2,'0'); return `${yy}-${mm}-${dd}`; };
+            const yesterdayStr = _fmt(todayDate);
 
             let checkDate = (dailyData[todayStr]?.messages > 0) ? new Date(todayStr) : new Date(yesterdayStr);
+            checkDate.setHours(0, 0, 0, 0);
             let current = 0;
 
             while (true) {
-                const key = checkDate.toISOString().slice(0, 10);
+                const key = _fmt(checkDate);
                 if (dailyData[key] && dailyData[key].messages > 0) {
                     current++;
                     checkDate.setDate(checkDate.getDate() - 1);
@@ -796,7 +801,7 @@ function filterLogs(entries, opts) {
             for (let i = 6; i >= 0; i--) {
                 const d = new Date();
                 d.setDate(d.getDate() - i);
-                const key = d.toISOString().slice(0, 10);
+                const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
                 result.push({
                     date: key,
                     label: `${d.getMonth() + 1}/${d.getDate()}`,
@@ -983,7 +988,7 @@ function filterLogs(entries, opts) {
                 const ch = entry.chats || 0;
                 const bm = entry.byModel || { flash: 0, thinking: 0, pro: 0 };
                 const f = bm.flash || 0, t = bm.thinking || 0, p = bm.pro || 0;
-                const w = f * 0 + t * 0.33 + p * 1;
+                const w = Object.keys(bm).reduce((s, k) => s + (bm[k] || 0) * (cm.MODEL_CONFIG[k]?.multiplier ?? 1), 0);
                 const wStr = w % 1 === 0 ? String(w) : w.toFixed(2);
                 rows.push(`${date},${msg},${ch},${f},${t},${p},${wStr}`);
                 sumMsg += msg; sumChats += ch; sumF += f; sumT += t; sumP += p; sumW += w;
@@ -1023,7 +1028,7 @@ function filterLogs(entries, opts) {
                     const msg = entry.messages || 0;
                     const bm = entry.byModel || { flash: 0, thinking: 0, pro: 0 };
                     const f = bm.flash || 0, t = bm.thinking || 0, p = bm.pro || 0;
-                    const w = f * 0 + t * 0.33 + p * 1;
+                    const w = Object.keys(bm).reduce((s, k) => s + (bm[k] || 0) * (cm.MODEL_CONFIG[k]?.multiplier ?? 1), 0);
                     const wStr = w % 1 === 0 ? String(w) : w.toFixed(1);
                     lines.push(`| ${date} | ${msg} | ${f} | ${t} | ${p} | ${wStr} |`);
                 }
@@ -1117,6 +1122,9 @@ function filterLogs(entries, opts) {
         },
 
         destroy() {
+            // 清理注入的样式
+            if (this._styleEl) { this._styleEl.remove(); this._styleEl = null; }
+
             if (this.observer) {
                 this.observer.disconnect();
                 this.observer = null;
@@ -1167,10 +1175,11 @@ function filterLogs(entries, opts) {
 
             const filterBar = document.createElement('div');
             filterBar.id = FILTER_ID;
-            filterBar.style.cssText = 'display:flex;gap:4px;padding:6px 12px;overflow-x:auto;border-bottom:1px solid rgba(255,255,255,0.08);align-items:center;flex-shrink:0;scrollbar-width:none;';
+            filterBar.style.cssText = 'display:flex;gap:4px;padding:6px 12px;overflow-x:auto;border-bottom:1px solid rgba(255,255,255,0.08);align-items:center;flex-shrink:0;scrollbar-width:none;height:auto;max-height:36px;align-self:start;';
 
             this._renderFilterTabs(filterBar);
-            sidebar.prepend(filterBar);
+            const overflowC = sidebar.querySelector('.overflow-container') || sidebar;
+            overflowC.prepend(filterBar);
         },
 
         removeNativeUI() {
@@ -1498,9 +1507,12 @@ function filterLogs(entries, opts) {
             });
         },
 
+        _styleEl: null,
+
         // --- 注入样式 ---
         injectStyles() {
-            GM_addStyle(`
+            if (this._styleEl) return;
+            this._styleEl = GM_addStyle(`
                 /* Folder Modal */
                 .gf-modal-overlay {
                     position: fixed;
@@ -2439,17 +2451,15 @@ function filterLogs(entries, opts) {
             const NATIVE_ID = 'gc-vault-native';
             if (document.getElementById(NATIVE_ID)) return;
 
-            const sendBtn = document.querySelector('button.send-button');
-            if (!sendBtn) return;
-            const btnContainer = sendBtn.parentElement;
-            if (!btnContainer) return;
+            const trailing = document.querySelector('.trailing-actions-wrapper');
+            if (!trailing) return;
 
             const btn = document.createElement('button');
             btn.id = NATIVE_ID;
             btn.className = 'gc-native-btn';
             btn.textContent = '\uD83D\uDC8E';
             btn.title = 'Prompt Vault';
-            btn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:16px;padding:4px 6px;border-radius:50%;transition:background 0.2s;line-height:1;';
+            btn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:16px;padding:4px 6px;border-radius:50%;transition:background 0.2s;line-height:1;display:flex;align-items:center;';
             btn.onmouseenter = () => { btn.style.background = 'rgba(128,128,128,0.2)'; };
             btn.onmouseleave = () => { btn.style.background = 'transparent'; };
             btn.onclick = (e) => {
@@ -2457,7 +2467,7 @@ function filterLogs(entries, opts) {
                 this._toggleQuickMenu(btn);
             };
 
-            btnContainer.insertBefore(btn, sendBtn);
+            trailing.insertBefore(btn, trailing.firstChild);
         },
 
         removeNativeUI() {
@@ -3012,7 +3022,7 @@ function filterLogs(entries, opts) {
 
             const toolbar = document.createElement('div');
             toolbar.id = TOOLBAR_ID;
-            toolbar.style.cssText = 'padding:4px 12px;border-bottom:1px solid rgba(255,255,255,0.06);';
+            toolbar.style.cssText = 'padding:4px 12px;border-bottom:1px solid rgba(255,255,255,0.06);height:auto;max-height:40px;align-self:start;';
 
             if (this._batchMode) {
                 this._renderBatchToolbar(toolbar);
@@ -3029,17 +3039,13 @@ function filterLogs(entries, opts) {
                 toolbar.appendChild(enterBtn);
             }
 
-            // Insert after folder filter bar (if present), otherwise after "new chat" button
+            // Insert into overflow-container (avoid CSS Grid issues on parent)
+            const overflowC = sidebar.querySelector('.overflow-container') || sidebar;
             const folderFilter = document.getElementById('gc-folder-filter');
-            if (folderFilter && folderFilter.parentElement) {
-                folderFilter.parentElement.insertBefore(toolbar, folderFilter.nextSibling);
+            if (folderFilter && folderFilter.parentElement === overflowC) {
+                overflowC.insertBefore(toolbar, folderFilter.nextSibling);
             } else {
-                const newChatBtn = sidebar.querySelector('a[href="/app"], button[data-test-id="new-chat"]');
-                if (newChatBtn && newChatBtn.parentElement) {
-                    newChatBtn.parentElement.insertBefore(toolbar, newChatBtn.nextSibling);
-                } else {
-                    sidebar.prepend(toolbar);
-                }
+                overflowC.prepend(toolbar);
             }
         },
 
@@ -3058,7 +3064,7 @@ function filterLogs(entries, opts) {
         },
 
         _renderBatchToolbar(toolbar) {
-            toolbar.style.cssText = 'padding:6px 12px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+            toolbar.style.cssText = 'padding:4px 12px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:6px;height:auto;max-height:40px;overflow:hidden;';
 
             const selectAllBtn = document.createElement('button');
             selectAllBtn.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.1);color:#9aa0a6;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;';
@@ -3812,7 +3818,8 @@ function filterLogs(entries, opts) {
 
         getSidebar() {
             return this._findFirst([
-                'bard-sidenav-container',
+                '.sidenav-with-history-container',
+                'bard-sidenav',
                 'nav[role="navigation"]'
             ]);
         },
@@ -3827,6 +3834,8 @@ function filterLogs(entries, opts) {
 
         getChatHeader() {
             return this._findFirst([
+                '.conversation-title-container',
+                'span.conversation-title',
                 'h1.conversation-title',
                 '[data-test-id="conversation-title"]'
             ]);
@@ -5800,7 +5809,7 @@ function filterLogs(entries, opts) {
                 });
 
                 // Weighted summary
-                const weightedTotal = allByModel.flash * 0 + allByModel.thinking * 0.33 + allByModel.pro * 1;
+                const weightedTotal = Object.keys(allByModel).reduce((sum, k) => sum + (allByModel[k] || 0) * (CounterModule.MODEL_CONFIG[k]?.multiplier ?? 1), 0);
                 const wStr = weightedTotal % 1 === 0 ? String(weightedTotal) : weightedTotal.toFixed(1);
                 const weightedRow = document.createElement('div');
                 weightedRow.style.cssText = 'font-size: 11px; color: var(--text-sub); margin-top: 8px; padding-top: 8px; border-top: 1px solid var(--divider, rgba(255,255,255,0.05));';
@@ -5904,19 +5913,34 @@ function filterLogs(entries, opts) {
     ModuleRegistry.init();
 
     // Upgrade onboarding: show for already-enabled modules that haven't been seen
+    // Uses a sequential queue so modals don't stack on top of each other
     {
         const seen = GM_getValue(GLOBAL_KEYS.ONBOARDING, {});
-        let updated = false;
+        const queue = [];
         ModuleRegistry.enabledModules.forEach(id => {
             const mod = ModuleRegistry.modules[id];
             if (!seen[id] && typeof mod?.getOnboarding === 'function') {
-                // Defer to avoid blocking init; show one at a time
-                setTimeout(() => PanelUI.showOnboarding(id), 2000);
+                queue.push(id);
                 seen[id] = true;
-                updated = true;
             }
         });
-        if (updated) GM_setValue(GLOBAL_KEYS.ONBOARDING, seen);
+        if (queue.length > 0) {
+            GM_setValue(GLOBAL_KEYS.ONBOARDING, seen);
+            let i = 0;
+            function showNext() {
+                if (i >= queue.length) return;
+                const id = queue[i++];
+                PanelUI.showOnboarding(id);
+                // Wait for user to dismiss before showing next (poll for overlay removal)
+                const check = setInterval(() => {
+                    if (!document.querySelector('.gc-onboarding-overlay')) {
+                        clearInterval(check);
+                        setTimeout(showNext, 500);
+                    }
+                }, 300);
+            }
+            setTimeout(showNext, 2000);
+        }
     }
 
     let pollTimer = setInterval(checkUserAndPanel, TIMINGS.POLL_INTERVAL);
