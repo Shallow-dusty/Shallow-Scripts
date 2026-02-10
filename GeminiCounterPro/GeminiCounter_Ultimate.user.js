@@ -112,6 +112,14 @@
         LOG_LEVEL: 'gemini_log_level',
         LOGS: 'gemini_logs_store'
     };
+    const TIMINGS = {
+        POLL_INTERVAL: 1500,
+        COUNTER_COOLDOWN: 1000,
+        OBSERVER_DEBOUNCE: 500,
+        TITLE_DEBOUNCE: 300,
+        FAB_AUTO_DISMISS: 5000,
+        MODEL_MENU_TIMEOUT: 2000,
+    };
     const PANEL_ID = 'gemini-monitor-panel-v7';
     const DEFAULT_POS = { top: '20px', left: 'auto', bottom: 'auto', right: '220px' };
     const TEMP_USER = "Guest";
@@ -182,12 +190,20 @@
             if (this.enabledModules.has(id)) {
                 this.enabledModules.delete(id);
                 if (this.modules[id]?.destroy) {
-                    this.modules[id].destroy();
+                    try {
+                        this.modules[id].destroy();
+                    } catch (e) {
+                        Logger.error('Module destroy failed', { id, error: String(e) });
+                    }
                 }
             } else {
                 this.enabledModules.add(id);
                 if (this.modules[id]?.init) {
-                    this.modules[id].init();
+                    try {
+                        this.modules[id].init();
+                    } catch (e) {
+                        Logger.error('Module init failed (toggle)', { id, error: String(e) });
+                    }
                 }
             }
             this.save();
@@ -201,7 +217,11 @@
         notifyUserChange(user) {
             this.enabledModules.forEach(id => {
                 if (this.modules[id]?.onUserChange) {
-                    this.modules[id].onUserChange(user);
+                    try {
+                        this.modules[id].onUserChange(user);
+                    } catch (e) {
+                        Logger.error('Module onUserChange failed', { id, error: String(e) });
+                    }
                 }
             });
         },
@@ -278,6 +298,27 @@
                     callback(newVal);
                 }
             });
+        },
+
+        // --- 共享工具 ---
+        sleep(ms) {
+            return new Promise(r => setTimeout(r, ms));
+        },
+
+        scanSidebarChats() {
+            const items = [];
+            document.querySelectorAll('a[href*="/app/"]').forEach(el => {
+                const href = el.getAttribute('href') || '';
+                const match = href.match(/\/app\/([a-zA-Z0-9\-_]+)/);
+                if (match) {
+                    let title = '';
+                    const textEl = el.querySelector('span, div');
+                    if (textEl) title = textEl.textContent.trim();
+                    if (!title) title = 'Untitled';
+                    items.push({ id: match[1], title, element: el, href });
+                }
+            });
+            return items;
         },
 
         // --- URL 工具 ---
@@ -414,7 +455,7 @@ function filterLogs(entries, opts) {
         defaultEnabled: true,
 
         // --- 模块私有常量 ---
-        COOLDOWN: 1000,
+        COOLDOWN: TIMINGS.COUNTER_COOLDOWN,
         MODEL_CONFIG: {
             flash: { label: '3 Flash', multiplier: 0, color: '#34a853' },
             thinking: { label: '3 Flash Thinking', multiplier: 0.33, color: '#fbbc04' },
@@ -532,7 +573,7 @@ function filterLogs(entries, opts) {
             });
 
             if (targetUser === TEMP_USER) {
-                this.state = { total: 0, totalChatsCreated: 0, chats: {}, dailyCounts: {}, viewMode: 'today', isExpanded: false, resetStep: 0 };
+                Object.assign(this.state, { total: 0, totalChatsCreated: 0, chats: {}, dailyCounts: {}, viewMode: 'today', isExpanded: false, resetStep: 0 });
                 return;
             }
 
@@ -549,7 +590,7 @@ function filterLogs(entries, opts) {
                     this.state.dailyCounts[today] = { messages: savedData.session, chats: 0 };
                 }
             } else {
-                this.state = { total: 0, totalChatsCreated: 0, chats: {}, dailyCounts: {}, viewMode: 'today', isExpanded: false, resetStep: 0 };
+                Object.assign(this.state, { total: 0, totalChatsCreated: 0, chats: {}, dailyCounts: {}, viewMode: 'today', isExpanded: false, resetStep: 0 });
             }
             Logger.debug('Loaded user data', {
                 user: targetUser,
@@ -716,9 +757,10 @@ function filterLogs(entries, opts) {
 
             // Current streak
             const todayStr = Core.getDayKey(this.resetHour);
-            const yesterday = new Date();
-            yesterday.setDate(yesterday.getDate() - 1);
-            const yesterdayStr = yesterday.toISOString().slice(0, 10);
+            const todayDate = new Date();
+            if (todayDate.getHours() < this.resetHour) todayDate.setDate(todayDate.getDate() - 1);
+            todayDate.setDate(todayDate.getDate() - 1);
+            const yesterdayStr = todayDate.toISOString().slice(0, 10);
 
             let checkDate = (dailyData[todayStr]?.messages > 0) ? new Date(todayStr) : new Date(yesterdayStr);
             let current = 0;
@@ -840,6 +882,7 @@ function filterLogs(entries, opts) {
             this._download(JSON.stringify(data, null, 2), `${this._getFilePrefix()}.json`, 'application/json');
         },
 
+        // <EXPORT_MODULE>
         exportCSV() {
             const cm = CounterModule;
             const header = 'Date,Messages,Chats,Flash,Thinking,Pro,Weighted';
@@ -903,6 +946,7 @@ function filterLogs(entries, opts) {
             lines.push('');
             this._download(lines.join('\n'), `${this._getFilePrefix()}.md`, 'text/markdown');
         },
+        // </EXPORT_MODULE>
 
         // Render export buttons section in settings modal
         renderExportButtons(container) {
@@ -1157,7 +1201,11 @@ function filterLogs(entries, opts) {
                             return title.includes(rule.value.toLowerCase());
                         }
                         if (rule.type === 'regex' && rule.value) {
-                            try { return new RegExp(rule.value, 'i').test(chat.title); }
+                            try {
+                                const regex = new RegExp(rule.value, 'i');
+                                const testStr = chat.title.substring(0, 500);
+                                return regex.test(testStr);
+                            }
                             catch { return false; }
                         }
                         return false;
@@ -1180,27 +1228,8 @@ function filterLogs(entries, opts) {
 
         // --- 侧边栏扫描 ---
         scanSidebarChats() {
-            const items = [];
-            document.querySelectorAll('nav a[href*="/app/"]').forEach(el => {
-                const href = el.getAttribute('href') || '';
-                const match = href.match(/\/app\/([a-zA-Z0-9\-_]+)/);
-                if (match) {
-                    // 尝试获取聊天标题
-                    let title = '';
-                    const textEl = el.querySelector('span, div');
-                    if (textEl) title = textEl.textContent.trim();
-                    if (!title) title = 'Untitled';
-
-                    items.push({
-                        id: match[1],
-                        title: title,
-                        element: el,
-                        href: href
-                    });
-                }
-            });
-            this.chatCache = items;
-            return items;
+            this.chatCache = Core.scanSidebarChats();
+            return this.chatCache;
         },
 
         // --- 仅在侧边栏聊天项上添加颜色标记 (6px dot) ---
@@ -1264,12 +1293,12 @@ function filterLogs(entries, opts) {
         // --- DOM 观察 ---
         startObserver() {
             // 延迟初始化
-            setTimeout(() => this.markSidebarChats(), 1500);
+            setTimeout(() => this.markSidebarChats(), TIMINGS.POLL_INTERVAL);
 
             // 监听 DOM 变化 (尽量缩小到侧边栏，降级到 body)
             this.observer = new MutationObserver(() => {
                 clearTimeout(this._markTimeout);
-                this._markTimeout = setTimeout(() => this.markSidebarChats(), 500);
+                this._markTimeout = setTimeout(() => this.markSidebarChats(), TIMINGS.OBSERVER_DEBOUNCE);
             });
 
             const sidebar = document.querySelector('bard-sidenav-container, nav, [role="navigation"]');
@@ -2182,18 +2211,26 @@ function filterLogs(entries, opts) {
         STORAGE_KEY: 'gemini_prompt_vault',
         _prompts: [],
 
+        _getStorageKey() {
+            const user = Core.getCurrentUser();
+            return user && user.includes('@') ? `${this.STORAGE_KEY}_${user}` : this.STORAGE_KEY;
+        },
+
         init() {
-            this._prompts = GM_getValue(this.STORAGE_KEY, []);
+            this._prompts = GM_getValue(this._getStorageKey(), []);
             Logger.info('PromptVaultModule initialized', { count: this._prompts.length });
         },
         destroy() {
             const fab = document.getElementById('gv-fab');
             if (fab) fab.remove();
         },
-        onUserChange() {},
+        onUserChange() {
+            this._prompts = GM_getValue(this._getStorageKey(), []);
+            PanelUI.renderDetailsPane();
+        },
 
         _save() {
-            GM_setValue(this.STORAGE_KEY, this._prompts);
+            GM_setValue(this._getStorageKey(), this._prompts);
         },
 
         addPrompt(name, content, category) {
@@ -2227,6 +2264,13 @@ function filterLogs(entries, opts) {
                 editor.appendChild(p);
                 // Trigger input event for Gemini to detect
                 editor.dispatchEvent(new Event('input', { bubbles: true }));
+                // Update usage stats
+                const prompt = this._prompts.find(pr => pr.content === content);
+                if (prompt) {
+                    prompt.usedCount = (prompt.usedCount || 0) + 1;
+                    prompt.lastUsedAt = new Date().toISOString();
+                    this._save();
+                }
                 Logger.info('Prompt inserted');
             }
         },
@@ -2429,9 +2473,9 @@ function filterLogs(entries, opts) {
 
         _isNewChat() {
             const url = location.href;
-            return url.includes('/app') && !url.includes('/app/') ||
+            return (url.includes('/app') && !url.includes('/app/')) ||
                    url.endsWith('/app') ||
-                   url.match(/\/app\?[^/]*$/);
+                   (url.match(/\/app\?[^/]*$/) !== null);
         },
 
         _startUrlWatcher() {
@@ -2461,7 +2505,7 @@ function filterLogs(entries, opts) {
                                 document.querySelector('[data-test-id="bard-mode-menu-button"]');
                 if (!modeBtn) return;
                 modeBtn.click();
-                await this._sleep(300);
+                await this._waitForElement('[data-test-id^="bard-mode-option-"]', TIMINGS.MODEL_MENU_TIMEOUT);
 
                 const modelMap = { flash: 'fast', thinking: 'thinking', pro: 'pro' };
                 const testId = 'bard-mode-option-' + (modelMap[this._preferredModel] || this._preferredModel);
@@ -2509,7 +2553,7 @@ function filterLogs(entries, opts) {
         },
 
         _sleep(ms) {
-            return new Promise(r => setTimeout(r, ms));
+            return Core.sleep(ms);
         },
 
         renderToSettings(container) {
@@ -2572,20 +2616,7 @@ function filterLogs(entries, opts) {
         },
 
         _scanChats() {
-            const links = document.querySelectorAll('a[href*="/app/"]');
-            const items = [];
-            links.forEach(el => {
-                const href = el.getAttribute('href') || '';
-                const match = href.match(/\/app\/([a-zA-Z0-9\-_]+)/);
-                if (match) {
-                    let title = '';
-                    const textEl = el.querySelector('span, div');
-                    if (textEl) title = textEl.textContent.trim();
-                    if (!title) title = 'Untitled';
-                    items.push({ id: match[1], title, element: el, href });
-                }
-            });
-            return items;
+            return Core.scanSidebarChats();
         },
 
         async _deleteChat(chatElement) {
@@ -2636,15 +2667,7 @@ function filterLogs(entries, opts) {
                     }
                 });
                 if (!confirmed) {
-                    // Fallback: look for any primary/danger button in a dialog
-                    const dialogs = document.querySelectorAll('[role="dialog"], mat-dialog-container, .mdc-dialog');
-                    dialogs.forEach(d => {
-                        const btns = d.querySelectorAll('button');
-                        if (btns.length >= 2) {
-                            btns[btns.length - 1].click(); // Usually the last button is confirm
-                            confirmed = true;
-                        }
-                    });
+                    throw new Error('Confirm button not found');
                 }
                 await this._sleep(300);
                 return true;
@@ -2687,7 +2710,7 @@ function filterLogs(entries, opts) {
         },
 
         _sleep(ms) {
-            return new Promise(r => setTimeout(r, ms));
+            return Core.sleep(ms);
         },
 
         renderToDetailsPane(container) {
@@ -2903,10 +2926,10 @@ function filterLogs(entries, opts) {
                 fab.style.transform = 'scale(1)';
             });
 
-            // Auto-dismiss after 5 seconds
+            // Auto-dismiss after timeout
             setTimeout(() => {
                 if (this._fab === fab) this._removeFab();
-            }, 5000);
+            }, TIMINGS.FAB_AUTO_DISMISS);
         },
 
         _removeFab() {
@@ -3007,6 +3030,7 @@ function filterLogs(entries, opts) {
         destroy() {
             if (this._styleEl) { this._styleEl.remove(); this._styleEl = null; }
             if (this._titleObserver) { this._titleObserver.disconnect(); this._titleObserver = null; }
+            if (this._titleDebounce) { clearTimeout(this._titleDebounce); this._titleDebounce = null; }
             if (this._keyHandler) {
                 document.removeEventListener('keydown', this._keyHandler, true);
                 this._keyHandler = null;
@@ -3053,6 +3077,7 @@ function filterLogs(entries, opts) {
 
         _applyTabTitle() {
             if (this._titleObserver) { this._titleObserver.disconnect(); this._titleObserver = null; }
+            if (this._titleDebounce) { clearTimeout(this._titleDebounce); this._titleDebounce = null; }
             if (!this.features.tabTitle.enabled) return;
 
             const updateTitle = () => {
@@ -3074,12 +3099,20 @@ function filterLogs(entries, opts) {
                 }
             };
 
+            const debouncedUpdate = () => {
+                if (this._titleDebounce) clearTimeout(this._titleDebounce);
+                this._titleDebounce = setTimeout(updateTitle, TIMINGS.TITLE_DEBOUNCE);
+            };
+
             // Initial update
             updateTitle();
 
-            // Watch for DOM changes
-            this._titleObserver = new MutationObserver(() => updateTitle());
-            this._titleObserver.observe(document.body, { childList: true, subtree: true, characterData: true });
+            // Watch for DOM changes — use debounced callback to avoid performance issues
+            this._titleObserver = new MutationObserver(debouncedUpdate);
+            // Try to observe a narrower container first
+            const chatContainer = document.querySelector('main, .chat-container, [role="main"]');
+            const target = chatContainer || document.body;
+            this._titleObserver.observe(target, { childList: true, subtree: true, characterData: true });
         },
 
         _applyCtrlEnter() {
@@ -3097,18 +3130,16 @@ function filterLogs(entries, opts) {
                 if (e.isComposing) return; // IME
 
                 if (!e.ctrlKey && !e.metaKey) {
-                    // Plain Enter - block send, insert newline instead
+                    // Plain Enter - block send, allow browser default (newline in contenteditable)
                     e.stopPropagation();
                     e.stopImmediatePropagation();
-                    // Don't need to insert newline - the editor handles Enter natively as newline
-                    // We just need to prevent the send handler from firing
-                }
-                // Ctrl+Enter or Meta+Enter - allow send by not blocking
-                if (e.ctrlKey || e.metaKey) {
-                    // Find and click the send button
+                } else {
+                    // Ctrl+Enter or Meta+Enter - trigger send
+                    e.preventDefault();
+                    e.stopPropagation();
+                    e.stopImmediatePropagation();
                     const sendBtn = document.querySelector('button.send-button, button[aria-label*="Send"]');
                     if (sendBtn && !sendBtn.disabled) {
-                        e.preventDefault();
                         sendBtn.click();
                     }
                 }
@@ -3183,6 +3214,7 @@ function filterLogs(entries, opts) {
     // ╚══════════════════════════════════════════════════════════════════════════╝
 
     const PanelUI = {
+        _activeTab: 'stats',
         // --- 样式注入 ---
         injectStyles() {
             GM_addStyle(`
@@ -3285,7 +3317,7 @@ function filterLogs(entries, opts) {
                     padding: 0 12px;
                     transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1);
                 }
-                .gemini-details-view.expanded { height: auto; opacity: 1; padding: 10px 12px 14px 12px; border-top: 1px solid var(--border); }
+                .gemini-details-view.expanded { height: auto; opacity: 1; padding: 10px 12px 14px 12px; border-top: 1px solid var(--border); max-height: 420px; overflow-y: auto; }
                 .section-title {
                     font-size: 9px; color: var(--text-sub); opacity: 0.5;
                     margin: 8px 0 4px 0; text-transform: uppercase; letter-spacing: 1px;
@@ -3500,6 +3532,34 @@ function filterLogs(entries, opts) {
                 .l-2 { background: rgba(138, 180, 248, 0.4); }
                 .l-3 { background: rgba(138, 180, 248, 0.7); }
                 .l-4 { background: rgba(138, 180, 248, 1.0); }
+
+                /* Details Pane Tab Bar */
+                .details-tab-bar {
+                    display: flex; gap: 2px; padding: 0 0 8px 0;
+                    border-bottom: 1px solid var(--divider, rgba(255,255,255,0.05));
+                    margin-bottom: 8px;
+                }
+                .details-tab {
+                    flex: 1; padding: 5px 0; text-align: center;
+                    font-size: 12px; cursor: pointer; border-radius: 6px;
+                    color: var(--text-sub); transition: all 0.2s;
+                    background: transparent;
+                }
+                .details-tab:hover { background: var(--row-hover); color: var(--text-main); }
+                .details-tab.active {
+                    background: var(--accent); color: #000; font-weight: 600;
+                }
+
+                /* Module Toggle Compact */
+                .module-toggle-compact {
+                    display: flex; justify-content: space-between; align-items: center;
+                    padding: 6px 0; border-bottom: 1px solid var(--divider, rgba(255,255,255,0.05));
+                }
+                .module-compact-label {
+                    display: flex; align-items: center; gap: 6px;
+                    font-size: 11px; color: var(--text-main);
+                }
+                .module-compact-label .module-icon { font-size: 14px; }
             `);
         },
 
@@ -3602,6 +3662,51 @@ function filterLogs(entries, opts) {
             if (!pane) return;
             pane.replaceChildren();
 
+            // Collect available tabs (stats is always present)
+            const tabs = [{ id: 'stats', icon: '📊' }];
+            const tabModules = ['folders', 'prompt-vault', 'batch-delete'];
+            tabModules.forEach(id => {
+                const mod = ModuleRegistry.modules[id];
+                if (mod && ModuleRegistry.isEnabled(id) && typeof mod.renderToDetailsPane === 'function') {
+                    tabs.push({ id, icon: mod.icon });
+                }
+            });
+
+            // Fallback to stats if active tab was disabled
+            if (!tabs.find(t => t.id === this._activeTab)) this._activeTab = 'stats';
+
+            // Only render tab bar when >1 tab
+            if (tabs.length > 1) {
+                const tabBar = document.createElement('div');
+                tabBar.className = 'details-tab-bar';
+                tabs.forEach(t => {
+                    const tab = document.createElement('div');
+                    tab.className = `details-tab ${t.id === this._activeTab ? 'active' : ''}`;
+                    tab.textContent = t.icon;
+                    tab.title = t.id;
+                    tab.onclick = (e) => {
+                        e.stopPropagation();
+                        this._activeTab = t.id;
+                        this.renderDetailsPane();
+                    };
+                    tabBar.appendChild(tab);
+                });
+                pane.appendChild(tabBar);
+            }
+
+            // Render content for active tab
+            if (this._activeTab === 'stats') {
+                this._renderStatsTab(pane);
+            } else {
+                const mod = ModuleRegistry.modules[this._activeTab];
+                if (mod && typeof mod.renderToDetailsPane === 'function') {
+                    mod.renderToDetailsPane(pane);
+                }
+            }
+        },
+
+        // --- Stats tab content (original Statistics + Profiles + Themes + Actions) ---
+        _renderStatsTab(pane) {
             const cm = CounterModule;
             const user = Core.getCurrentUser();
             const inspecting = Core.getInspectingUser();
@@ -3673,21 +3778,6 @@ function filterLogs(entries, opts) {
                     pane.appendChild(row);
                 });
             }
-
-            // Folders (if enabled)
-            if (ModuleRegistry.isEnabled('folders')) {
-                FoldersModule.renderToDetailsPane(pane);
-            }
-
-            // Render other enabled modules' details panes
-            ['prompt-vault', 'batch-delete'].forEach(modId => {
-                if (ModuleRegistry.isEnabled(modId)) {
-                    const mod = ModuleRegistry.getAll().find(m => m.id === modId);
-                    if (mod && typeof mod.renderToDetailsPane === 'function') {
-                        mod.renderToDetailsPane(pane);
-                    }
-                }
-            });
 
             // Themes
             pane.appendChild(this.createSectionTitle('Themes'));
@@ -3913,15 +4003,14 @@ function filterLogs(entries, opts) {
         applyPos(el, pos) {
             const winW = window.innerWidth;
             const winH = window.innerHeight;
-            const savedLeft = parseFloat(pos.left);
-            const savedTop = parseFloat(pos.top);
+            const savedLeft = parseFloat(pos.left) || 0;
+            const savedTop = parseFloat(pos.top) || 0;
 
-            if ((savedLeft && savedLeft > winW - 50) || (savedTop && savedTop > winH - 50)) {
-                if (pos.left !== 'auto' && pos.top !== 'auto') {
-                    console.warn(`💎 Panel off-screen detected. Resetting.`);
-                    pos = DEFAULT_POS;
-                    GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
-                }
+            if (pos.left !== 'auto' && pos.top !== 'auto' &&
+                (savedLeft > winW - 50 || savedTop > winH - 50)) {
+                console.warn(`💎 Panel off-screen detected. Resetting.`);
+                pos = DEFAULT_POS;
+                GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
             }
             el.style.top = pos.top;
             el.style.left = pos.left;
@@ -4010,38 +4099,31 @@ function filterLogs(entries, opts) {
 
             ModuleRegistry.getAll().forEach(mod => {
                 const row = document.createElement('div');
-                row.className = 'module-toggle-row';
+                row.className = 'module-toggle-compact';
+                row.title = mod.description;
 
-                const info = document.createElement('div');
-                info.className = 'module-info';
+                const label = document.createElement('div');
+                label.className = 'module-compact-label';
                 const icon = document.createElement('span');
                 icon.className = 'module-icon';
                 icon.textContent = mod.icon;
-                const textDiv = document.createElement('div');
-                textDiv.className = 'module-text';
-                const nameSpan = document.createElement('span');
-                nameSpan.className = 'module-name';
-                nameSpan.textContent = mod.name;
-                const descSpan = document.createElement('span');
-                descSpan.className = 'module-desc';
-                descSpan.textContent = mod.description;
-                textDiv.appendChild(nameSpan);
-                textDiv.appendChild(descSpan);
-                info.appendChild(icon);
-                info.appendChild(textDiv);
+                const name = document.createElement('span');
+                name.textContent = mod.name;
+                label.appendChild(icon);
+                label.appendChild(name);
 
                 const toggle = document.createElement('div');
                 toggle.className = `toggle-switch ${ModuleRegistry.isEnabled(mod.id) ? 'on' : ''}`;
                 toggle.onclick = () => {
                     ModuleRegistry.toggle(mod.id);
                     toggle.classList.toggle('on');
-                    // 刷新详情面板以显示/隐藏 Folders 区域
-                    if (mod.id === 'folders' && CounterModule.state.isExpanded) {
+                    // 刷新详情面板以显示/隐藏模块区域
+                    if (CounterModule.state.isExpanded) {
                         PanelUI.renderDetailsPane();
                     }
                 };
 
-                row.appendChild(info);
+                row.appendChild(label);
                 row.appendChild(toggle);
                 extSection.appendChild(row);
             });
@@ -4614,7 +4696,13 @@ function filterLogs(entries, opts) {
             const overlay = document.createElement('div');
             overlay.id = 'gemini-dashboard-overlay';
             overlay.className = 'dash-overlay';
-            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            overlay.onclick = (e) => {
+                if (e.target === overlay) {
+                    const tip = document.getElementById('g-heatmap-tooltip');
+                    if (tip) tip.remove();
+                    overlay.remove();
+                }
+            };
 
             const modal = document.createElement('div');
             modal.className = 'dash-modal';
@@ -4637,7 +4725,11 @@ function filterLogs(entries, opts) {
             const close = document.createElement('div');
             close.className = 'dash-close';
             close.textContent = '×';
-            close.onclick = () => overlay.remove();
+            close.onclick = () => {
+                const tip = document.getElementById('g-heatmap-tooltip');
+                if (tip) tip.remove();
+                overlay.remove();
+            };
 
             header.appendChild(titleDiv);
             header.appendChild(close);
@@ -4922,6 +5014,15 @@ function filterLogs(entries, opts) {
                     } else {
                         cm.state.dailyCounts[day].messages += counts.messages;
                         cm.state.dailyCounts[day].chats += counts.chats;
+                        // Merge byModel counts
+                        if (counts.byModel) {
+                            if (!cm.state.dailyCounts[day].byModel) {
+                                cm.state.dailyCounts[day].byModel = { flash: 0, thinking: 0, pro: 0 };
+                            }
+                            cm.state.dailyCounts[day].byModel.flash += counts.byModel.flash || 0;
+                            cm.state.dailyCounts[day].byModel.thinking += counts.byModel.thinking || 0;
+                            cm.state.dailyCounts[day].byModel.pro += counts.byModel.pro || 0;
+                        }
                     }
                 }
                 for (const [cid, count] of Object.entries(guestState.chats)) {
@@ -4953,12 +5054,20 @@ function filterLogs(entries, opts) {
     // --- 初始化 ---
     PanelUI.injectStyles();
     ModuleRegistry.init();
-    setInterval(checkUserAndPanel, 1500);
+    let pollTimer = setInterval(checkUserAndPanel, TIMINGS.POLL_INTERVAL);
 
-    // 窗口聚焦自动同步
+    // 窗口聚焦/隐藏 — 暂停轮询 + 自动同步
     document.addEventListener('visibilitychange', () => {
-        if (document.visibilityState === 'visible' && inspectingUser) {
-            CounterModule.loadDataForUser(inspectingUser);
+        if (document.visibilityState === 'visible') {
+            // 恢复轮询
+            if (!pollTimer) pollTimer = setInterval(checkUserAndPanel, TIMINGS.POLL_INTERVAL);
+            // 同步数据
+            if (inspectingUser && ModuleRegistry.isEnabled('counter')) {
+                CounterModule.loadDataForUser(inspectingUser);
+            }
+        } else {
+            // 标签页隐藏时暂停轮询
+            if (pollTimer) { clearInterval(pollTimer); pollTimer = null; }
         }
     });
 
