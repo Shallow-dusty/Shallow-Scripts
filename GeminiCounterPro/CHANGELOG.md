@@ -1,5 +1,39 @@
 # 📜 Gemini Counter Pro - Changelog
 
+### 📦 v9.x Series: Native UI Integration (原生界面集成)
+
+#### **v9.2**
+
+> _2026/02/10_
+
+- **🌐 NativeUI Framework**: 新增原生 UI 注入框架，模块可将 UI 元素嵌入 Gemini 原生界面
+- **📤 Export Native Button**: 聊天标题栏旁注入 📤 导出按钮，下拉菜单选择 JSON/CSV/Markdown
+- **💎 Prompt Vault Quick Menu**: 输入框旁注入 💎 按钮，弹出提示词快捷菜单一键插入
+- **🗑️ Batch Delete Sidebar**: 侧边栏注入批量管理工具栏，复选框覆盖对话项，支持全选/批量删除
+- **📁 Folders Filter Bar**: 侧边栏顶部注入文件夹筛选标签栏，按分组过滤对话
+- **🔒 Default Model Indicator**: 模型切换按钮旁显示 🔒 锁定指示器
+- **🎨 UI Tweaks Status Dots**: 输入框旁 3 个微型状态指示点
+- **📖 Module Onboarding**: 首次启用模块时弹出引导页面（吐槽风格 + 使用说明），支持中英文切换
+- **🔧 Code Review Fixes**: 修复 5 个 BUG + 6 个设计问题（AbortController 菜单生命周期、侧边栏注入顺序、position:relative 安全检查、NativeUI.t() 双语支持等）
+- **🧩 Module Interface Extension**: 新增 `injectNativeUI()`, `removeNativeUI()`, `getOnboarding()` 可选方法
+
+#### **v9.1**
+
+> _2026/02/10_
+
+- **📑 Details Pane Tab Navigation**: 详情面板新增 Tab 导航，模块内容分标签页显示
+- **📐 Compact Extensions**: Feature Extensions 区域紧凑布局优化
+- **📏 Height Limit**: 详情面板最大高度限制，防止内容溢出
+
+#### **v9.0**
+
+> _2026/02/10_
+
+- **🏗️ Full Feature Platform**: 8 个模块全部就绪的完整功能平台
+- **📊 Counter** | **📤 Export** | **📁 Folders** | **💎 PromptVault** | **🤖 DefaultModel** | **🗑️ BatchDelete** | **💬 QuoteReply** | **🎨 UITweaks**
+
+---
+
 ### 📦 v8.x Series: Full Feature Platform (全功能平台)
 
 #### **v8.12**
@@ -56,7 +90,6 @@
 - **📂 Category Grouping**: Prompt 按分类分组显示（General/Coding/Writing/Custom），折叠展开
 - **✏️ CRUD Editor**: 完整的新增/编辑/删除 Prompt 模态框，支持名称、分类、内容
 - **📋 Quick Insert**: 点击 Prompt 一键插入到 Gemini 输入框 (`div.ql-editor[contenteditable]`)
-- **📊 Usage Stats**: 记录每个 Prompt 的使用次数和最后使用时间
 - **🔌 Module Toggle**: 在 Feature Extensions 中启用/禁用，默认关闭
 
 #### **v8.7**

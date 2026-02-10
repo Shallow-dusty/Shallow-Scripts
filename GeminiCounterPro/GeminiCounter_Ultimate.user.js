@@ -1,8 +1,8 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v8.12)
+// @name         Gemini Counter Ultimate (v9.2)
 // @namespace    http://tampermonkey.net/
-// @version      8.12
-// @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
+// @version      9.2
+// @description  模块化架构：可扩展的 Gemini 助手平台 - 原生 UI 集成 + 模块引导 + 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
 // @grant        GM_addStyle
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v8.12 (Modular - Pure Enhancement) Starting...");
+    console.log("💎 Gemini Assistant v9.2 (Modular - Native UI Integration) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -110,7 +110,9 @@
         MODULES: 'gemini_enabled_modules',
         DEBUG: 'gemini_debug_enabled',
         LOG_LEVEL: 'gemini_log_level',
-        LOGS: 'gemini_logs_store'
+        LOGS: 'gemini_logs_store',
+        ONBOARDING: 'gemini_onboarding_seen',
+        ONBOARDING_LANG: 'gemini_onboarding_lang'
     };
     const TIMINGS = {
         POLL_INTERVAL: 1500,
@@ -204,6 +206,17 @@
                     } catch (e) {
                         Logger.error('Module init failed (toggle)', { id, error: String(e) });
                     }
+                }
+                // Inject native UI when enabling
+                if (typeof this.modules[id]?.injectNativeUI === 'function') {
+                    try { this.modules[id].injectNativeUI(); } catch (e) { /* silent */ }
+                }
+                // Show onboarding on first enable
+                const seen = GM_getValue(GLOBAL_KEYS.ONBOARDING, {});
+                if (!seen[id] && typeof this.modules[id]?.getOnboarding === 'function') {
+                    PanelUI.showOnboarding(id);
+                    seen[id] = true;
+                    GM_setValue(GLOBAL_KEYS.ONBOARDING, seen);
                 }
             }
             this.save();
@@ -849,9 +862,85 @@ function filterLogs(entries, opts) {
             Logger.info('ExportModule initialized');
         },
         destroy() {
+            this.removeNativeUI();
             Logger.info('ExportModule destroyed');
         },
         onUserChange() { /* no-op */ },
+
+        // --- Native UI: Export button next to chat title ---
+        injectNativeUI() {
+            const NATIVE_ID = 'gc-export-native';
+            if (document.getElementById(NATIVE_ID)) return;
+
+            const titleEl = NativeUI.getChatHeader();
+            if (!titleEl) return;
+            const parent = titleEl.parentElement;
+            if (!parent) return;
+
+            const btn = document.createElement('button');
+            btn.id = NATIVE_ID;
+            btn.className = 'gc-native-btn';
+            btn.textContent = '\uD83D\uDCE4';
+            btn.title = 'Export conversation';
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                this._toggleExportMenu(btn);
+            };
+
+            const pos = getComputedStyle(parent).position;
+            if (pos === 'static' || pos === '') parent.style.position = 'relative';
+            parent.appendChild(btn);
+        },
+
+        removeNativeUI() {
+            NativeUI.remove('gc-export-native');
+            NativeUI.remove('gc-export-menu');
+            if (this._menuAbort) { this._menuAbort.abort(); this._menuAbort = null; }
+        },
+
+        _toggleExportMenu(anchorBtn) {
+            const MENU_ID = 'gc-export-menu';
+            const existing = document.getElementById(MENU_ID);
+            if (existing) { existing.remove(); return; }
+
+            const menu = document.createElement('div');
+            menu.id = MENU_ID;
+            menu.className = 'gc-dropdown-menu';
+            menu.style.cssText = 'position:absolute;top:100%;right:0;margin-top:4px;';
+
+            const items = [
+                { label: '\uD83D\uDCC4 JSON', action: () => this.exportJSON() },
+                { label: '\uD83D\uDCCA CSV', action: () => this.exportCSV() },
+                { label: '\uD83D\uDCDD Markdown', action: () => this.exportMarkdown() }
+            ];
+
+            items.forEach(item => {
+                const el = document.createElement('div');
+                el.className = 'gc-dropdown-item';
+                el.textContent = item.label;
+                el.onclick = (e) => {
+                    e.stopPropagation();
+                    menu.remove();
+                    item.action();
+                };
+                menu.appendChild(el);
+            });
+
+            anchorBtn.parentElement.appendChild(menu);
+
+            // Close on outside click (with AbortController for cleanup)
+            if (this._menuAbort) this._menuAbort.abort();
+            this._menuAbort = new AbortController();
+            const signal = this._menuAbort.signal;
+            setTimeout(() => {
+                document.addEventListener('click', (e) => {
+                    if (!menu.contains(e.target) && e.target !== anchorBtn) {
+                        menu.remove();
+                        if (this._menuAbort) { this._menuAbort.abort(); this._menuAbort = null; }
+                    }
+                }, { capture: true, signal });
+            }, 0);
+        },
 
         // --- Export helpers ---
         _download(content, filename, type) {
@@ -948,6 +1037,21 @@ function filterLogs(entries, opts) {
         },
         // </EXPORT_MODULE>
 
+        getOnboarding() {
+            return {
+                zh: {
+                    rant: '2026 年了，Google 最引以为傲的 AI 产品居然不支持导出对话。你跟 Gemini 讨论了三天的架构方案，结果想保存一份？不好意思，请手动复制粘贴 300 条消息。产品经理是不是觉得用户的对话像阅后即焚的 Snapchat？',
+                    features: '在聊天标题旁添加 \uD83D\uDCE4 导出按钮，一键导出当前对话为 JSON/CSV/Markdown 文件。',
+                    guide: '1. 打开任意对话 \u2192 2. 点击标题右侧的 \uD83D\uDCE4 按钮 \u2192 3. 选择导出格式 \u2192 4. 文件自动下载'
+                },
+                en: {
+                    rant: "It's 2026. Google's flagship AI product doesn't let you export conversations. You spent three days discussing architecture with Gemini and want to save it? Sorry, please manually copy-paste 300 messages. Does the PM think conversations are Snapchats?",
+                    features: 'Adds a \uD83D\uDCE4 export button next to the chat title. One-click export to JSON/CSV/Markdown.',
+                    guide: '1. Open any conversation \u2192 2. Click \uD83D\uDCE4 next to the title \u2192 3. Pick a format \u2192 4. File downloads automatically'
+                }
+            };
+        },
+
         // Render export buttons section in settings modal
         renderExportButtons(container) {
             const jsonBtn = document.createElement('button');
@@ -1002,6 +1106,7 @@ function filterLogs(entries, opts) {
         _searchQuery: '',
         _batchMode: false,
         _batchSelected: new Set(),
+        _activeFilter: null,
 
         // --- 生命周期 ---
         init() {
@@ -1037,16 +1142,96 @@ function filterLogs(entries, opts) {
                 el.classList.remove('gf-drop-highlight');
             });
 
+            this.removeNativeUI();
             Logger.info('FoldersModule destroyed');
         },
 
         onUserChange(user) {
             this.loadData();
             this.markSidebarChats();
+            this._activeFilter = null;
+            this.removeNativeUI();
             // 刷新详情面板
             if (CounterModule.state.isExpanded) {
                 PanelUI.renderDetailsPane();
             }
+        },
+
+        // --- 原生 UI 注入 ---
+        injectNativeUI() {
+            const FILTER_ID = 'gc-folder-filter';
+            if (document.getElementById(FILTER_ID)) return;
+
+            const sidebar = NativeUI.getSidebar();
+            if (!sidebar) return;
+
+            const filterBar = document.createElement('div');
+            filterBar.id = FILTER_ID;
+            filterBar.style.cssText = 'display:flex;gap:4px;padding:6px 12px;overflow-x:auto;border-bottom:1px solid rgba(255,255,255,0.08);align-items:center;flex-shrink:0;scrollbar-width:none;';
+
+            this._renderFilterTabs(filterBar);
+            sidebar.prepend(filterBar);
+        },
+
+        removeNativeUI() {
+            NativeUI.remove('gc-folder-filter');
+            // 恢复所有被隐藏的对话项
+            const chats = Core.scanSidebarChats();
+            chats.forEach(chat => {
+                if (chat.element) chat.element.style.display = '';
+            });
+            this._activeFilter = null;
+        },
+
+        _renderFilterTabs(container) {
+            container.replaceChildren();
+            const folders = this.data.folderOrder
+                .map(id => ({ id, ...this.data.folders[id] }))
+                .filter(f => f.name);
+
+            // "全部" 标签
+            const allTab = this._createFilterTab('全部', null, '#8ab4f8');
+            container.appendChild(allTab);
+
+            // 各文件夹标签
+            folders.forEach(folder => {
+                const tab = this._createFilterTab(folder.name, folder.id, folder.color);
+                container.appendChild(tab);
+            });
+        },
+
+        _createFilterTab(label, folderId, color) {
+            const tab = document.createElement('button');
+            tab.className = 'gc-native-btn';
+            const isActive = this._activeFilter === folderId;
+            tab.style.cssText = `padding:3px 10px;border-radius:14px;font-size:12px;white-space:nowrap;cursor:pointer;border:1px solid ${color || '#8ab4f8'}40;background:${isActive ? (color || '#8ab4f8') + '30' : 'transparent'};color:${isActive ? (color || '#8ab4f8') : '#aaa'};font-weight:${isActive ? '600' : '400'};transition:all 0.15s;`;
+            tab.textContent = label;
+            tab.onclick = (e) => {
+                e.stopPropagation();
+                this._activeFilter = folderId;
+                this._applyFilter(folderId);
+                // 刷新标签栏高亮
+                const bar = document.getElementById('gc-folder-filter');
+                if (bar) this._renderFilterTabs(bar);
+            };
+            return tab;
+        },
+
+        _applyFilter(folderId) {
+            const chats = Core.scanSidebarChats();
+            chats.forEach(chat => {
+                if (!folderId) {
+                    chat.element.style.display = '';
+                } else {
+                    const assignment = this.data.chatToFolder[chat.id];
+                    chat.element.style.display = (assignment === folderId) ? '' : 'none';
+                }
+            });
+        },
+
+        _refreshFilterBar() {
+            const bar = document.getElementById('gc-folder-filter');
+            if (bar) this._renderFilterTabs(bar);
         },
 
         // --- 数据管理 ---
@@ -1083,6 +1268,7 @@ function filterLogs(entries, opts) {
             this.data.folderOrder.push(id);
             this.saveData();
             this.markSidebarChats();
+            this._refreshFilterBar();
             PanelUI.renderDetailsPane();
             return id;
         },
@@ -1091,6 +1277,7 @@ function filterLogs(entries, opts) {
             if (this.data.folders[folderId]) {
                 this.data.folders[folderId].name = newName;
                 this.saveData();
+                this._refreshFilterBar();
                 PanelUI.renderDetailsPane();
             }
         },
@@ -1107,6 +1294,7 @@ function filterLogs(entries, opts) {
             this.data.folderOrder = this.data.folderOrder.filter(id => id !== folderId);
             this.saveData();
             this.markSidebarChats();
+            this._refreshFilterBar();
             PanelUI.renderDetailsPane();
         },
 
@@ -1123,6 +1311,7 @@ function filterLogs(entries, opts) {
                 this.data.folders[folderId].color = color;
                 this.saveData();
                 this.markSidebarChats();
+                this._refreshFilterBar();
                 PanelUI.renderDetailsPane();
             }
         },
@@ -1601,6 +1790,21 @@ function filterLogs(entries, opts) {
                     border-color: var(--accent, #8ab4f8);
                 }
             `);
+        },
+
+        getOnboarding() {
+            return {
+                zh: {
+                    rant: '你的 Gemini 侧边栏现在是什么样？200 个无序对话，按时间排列，连搜索都没有。想找上周那个关于 Kubernetes 部署的对话？祝你好运，慢慢翻吧。Google Keep 有标签，Gmail 有标签，Google Drive 有文件夹，但 Gemini 就是没有。一致性？不存在的。',
+                    features: '侧边栏顶部添加文件夹筛选栏，支持按分组过滤对话。对话项显示彩色文件夹标记，支持拖拽分配。',
+                    guide: '1. 在浮动面板的 📁 标签页创建文件夹\n2. 拖拽对话到文件夹\n3. 点击侧边栏顶部的文件夹标签筛选'
+                },
+                en: {
+                    rant: "Your Gemini sidebar right now: 200 unorganized conversations sorted by time with no search. Want to find last week's Kubernetes deployment chat? Good luck scrolling. Google Keep has labels, Gmail has labels, Drive has folders, but Gemini has nothing. Consistency? Never heard of it.",
+                    features: 'Adds a folder filter bar at the top of the sidebar. Filter conversations by group. Chat items show colored folder dots, with drag-and-drop assignment.',
+                    guide: '1. Create folders in the 📁 tab of the floating panel\n2. Drag conversations into folders\n3. Click folder tabs at the top of the sidebar to filter'
+                }
+            };
         },
 
         // --- 渲染到详情面板 ---
@@ -2223,10 +2427,134 @@ function filterLogs(entries, opts) {
         destroy() {
             const fab = document.getElementById('gv-fab');
             if (fab) fab.remove();
+            this.removeNativeUI();
         },
         onUserChange() {
             this._prompts = GM_getValue(this._getStorageKey(), []);
             PanelUI.renderDetailsPane();
+        },
+
+        // --- Native UI: Quick menu button near input area ---
+        injectNativeUI() {
+            const NATIVE_ID = 'gc-vault-native';
+            if (document.getElementById(NATIVE_ID)) return;
+
+            const sendBtn = document.querySelector('button.send-button');
+            if (!sendBtn) return;
+            const btnContainer = sendBtn.parentElement;
+            if (!btnContainer) return;
+
+            const btn = document.createElement('button');
+            btn.id = NATIVE_ID;
+            btn.className = 'gc-native-btn';
+            btn.textContent = '\uD83D\uDC8E';
+            btn.title = 'Prompt Vault';
+            btn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:16px;padding:4px 6px;border-radius:50%;transition:background 0.2s;line-height:1;';
+            btn.onmouseenter = () => { btn.style.background = 'rgba(128,128,128,0.2)'; };
+            btn.onmouseleave = () => { btn.style.background = 'transparent'; };
+            btn.onclick = (e) => {
+                e.stopPropagation();
+                this._toggleQuickMenu(btn);
+            };
+
+            btnContainer.insertBefore(btn, sendBtn);
+        },
+
+        removeNativeUI() {
+            NativeUI.remove('gc-vault-native');
+            NativeUI.remove('gc-vault-menu');
+            if (this._menuAbort) { this._menuAbort.abort(); this._menuAbort = null; }
+        },
+
+        _toggleQuickMenu(anchorBtn) {
+            const MENU_ID = 'gc-vault-menu';
+            const existing = document.getElementById(MENU_ID);
+            if (existing) { existing.remove(); return; }
+
+            const menu = document.createElement('div');
+            menu.id = MENU_ID;
+            menu.className = 'gc-dropdown-menu';
+            menu.style.cssText = 'position:fixed;bottom:60px;max-height:300px;overflow-y:auto;min-width:200px;';
+
+            // Position near the button
+            const rect = anchorBtn.getBoundingClientRect();
+            menu.style.left = rect.left + 'px';
+            menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
+
+            if (this._prompts.length === 0) {
+                const empty = document.createElement('div');
+                empty.className = 'gc-dropdown-item';
+                empty.style.cssText = 'color:#9aa0a6;font-size:12px;';
+                empty.textContent = '\u8FD8\u6CA1\u6709\u4FDD\u5B58\u7684\u63D0\u793A\u8BCD';
+                menu.appendChild(empty);
+            } else {
+                // Group by category, show max 8
+                const categories = {};
+                this._prompts.forEach(p => {
+                    const cat = p.category || 'General';
+                    if (!categories[cat]) categories[cat] = [];
+                    categories[cat].push(p);
+                });
+
+                let count = 0;
+                Object.entries(categories).forEach(([catName, prompts]) => {
+                    if (count >= 8) return;
+                    const catLabel = document.createElement('div');
+                    catLabel.style.cssText = 'padding:4px 16px;font-size:9px;color:#9aa0a6;text-transform:uppercase;letter-spacing:0.5px;';
+                    catLabel.textContent = catName;
+                    menu.appendChild(catLabel);
+
+                    prompts.forEach(p => {
+                        if (count >= 8) return;
+                        const item = document.createElement('div');
+                        item.className = 'gc-dropdown-item';
+                        item.style.fontSize = '12px';
+                        item.textContent = p.name;
+                        item.title = p.content.substring(0, 80);
+                        item.onclick = (e) => {
+                            e.stopPropagation();
+                            menu.remove();
+                            this.insertPrompt(p.content);
+                        };
+                        menu.appendChild(item);
+                        count++;
+                    });
+                });
+            }
+
+            // "Manage prompts" link at bottom
+            const divider = document.createElement('div');
+            divider.style.cssText = 'border-top:1px solid rgba(255,255,255,0.08);margin:4px 0;';
+            menu.appendChild(divider);
+            const manageLink = document.createElement('div');
+            manageLink.className = 'gc-dropdown-item';
+            manageLink.style.cssText = 'font-size:11px;color:#8ab4f8;';
+            manageLink.textContent = NativeUI.t('管理提示词...', 'Manage prompts...');
+            manageLink.onclick = (e) => {
+                e.stopPropagation();
+                menu.remove();
+                // Open panel details pane to Prompt Vault tab
+                const cm = CounterModule;
+                if (!cm.state.isExpanded) {
+                    PanelUI.toggleDetails();
+                }
+            };
+            menu.appendChild(manageLink);
+
+            document.body.appendChild(menu);
+
+            // Close on outside click (with AbortController for cleanup)
+            if (this._menuAbort) this._menuAbort.abort();
+            this._menuAbort = new AbortController();
+            const signal = this._menuAbort.signal;
+            setTimeout(() => {
+                document.addEventListener('click', (e) => {
+                    if (!menu.contains(e.target) && e.target !== anchorBtn) {
+                        menu.remove();
+                        if (this._menuAbort) { this._menuAbort.abort(); this._menuAbort = null; }
+                    }
+                }, { capture: true, signal });
+            }, 0);
         },
 
         _save() {
@@ -2273,6 +2601,21 @@ function filterLogs(entries, opts) {
                 }
                 Logger.info('Prompt inserted');
             }
+        },
+
+        getOnboarding() {
+            return {
+                zh: {
+                    rant: '每次打开 Gemini 都要重新敲一遍"你是一个资深架构师..."，Google 觉得你的手指不需要休息。ChatGPT 2023 年就有 Custom Instructions 了，Gemini 表示：我们不一样，我们让用户每次都从零开始，这叫"新鲜感"。',
+                    features: '输入框旁添加 💎 按钮，点击弹出提示词快捷菜单，一键插入常用提示词。支持分类管理、编辑、使用统计。',
+                    guide: '1. 点击输入框旁的 💎 → 2. 选择提示词插入 → 3. 如需管理提示词，点击菜单底部"管理提示词"'
+                },
+                en: {
+                    rant: "Every time you open Gemini you retype 'You are a senior architect...' because Google thinks your fingers need exercise. ChatGPT had Custom Instructions in 2023. Gemini says: we're different, we let users start from scratch every time. It's called 'freshness'.",
+                    features: 'Adds a 💎 button near the input box. Click to open a prompt quick menu and insert saved prompts with one click. Supports categories, editing, and usage stats.',
+                    guide: '1. Click 💎 near the input box → 2. Select a prompt to insert → 3. To manage prompts, click "Manage prompts" at the bottom'
+                }
+            };
         },
 
         renderToDetailsPane(container) {
@@ -2461,13 +2804,37 @@ function filterLogs(entries, opts) {
                 this._pollTimer = null;
             }
             this._switching = false;
+            this.removeNativeUI();
         },
 
         onUserChange() {},
 
+        // --- 原生 UI 注入 ---
+        injectNativeUI() {
+            const LOCK_ID = 'gc-model-lock';
+            if (document.getElementById(LOCK_ID)) return;
+
+            const modelBtn = NativeUI.getModelSwitch();
+            if (!modelBtn) return;
+
+            const lock = document.createElement('span');
+            lock.id = LOCK_ID;
+            lock.textContent = '🔒';
+            lock.title = '已锁定: ' + (this._preferredModel === 'flash' ? 'Fast' : this._preferredModel === 'thinking' ? 'Thinking' : 'Pro');
+            lock.style.cssText = 'font-size:10px;opacity:0.6;margin-left:4px;cursor:default;user-select:none;';
+            modelBtn.parentElement.appendChild(lock);
+        },
+
+        removeNativeUI() {
+            NativeUI.remove('gc-model-lock');
+        },
+
         setPreferredModel(model) {
             this._preferredModel = model;
             GM_setValue(this.STORAGE_KEY, model);
+            // 刷新锁定指示器
+            this.removeNativeUI();
+            this.injectNativeUI();
             Logger.info('Default model set', { model });
         },
 
@@ -2556,6 +2923,21 @@ function filterLogs(entries, opts) {
             return Core.sleep(ms);
         },
 
+        getOnboarding() {
+            return {
+                zh: {
+                    rant: 'Gemini 每次新建对话都默认选 Flash。你明明想用 Pro，但它偏要你每次手动切。这就像一个咖啡店，你天天来点美式，但服务员每次都问"先生，来杯速溶咖啡吧？"。Google，求求你记住用户的选择，这不难对吧？',
+                    features: '自动将新对话切换到你的首选模型。模型选择按钮旁显示 🔒 锁定标记。',
+                    guide: '1. 在设置中选择首选模型 (Fast/Thinking/Pro)\n2. 新建对话时自动切换\n3. 看到 🔒 表示已锁定'
+                },
+                en: {
+                    rant: "Gemini defaults to Flash for every new chat. You want Pro, but it insists on asking every time. It's like a coffee shop where you come daily for an americano, but the barista says 'instant coffee today, sir?' Google, please just remember the user's choice. It's not hard.",
+                    features: 'Automatically switches new conversations to your preferred model. Shows a 🔒 lock indicator next to the model switch button.',
+                    guide: '1. Select your preferred model in Settings (Fast/Thinking/Pro)\n2. New chats auto-switch to it\n3. The 🔒 icon confirms the lock is active'
+                }
+            };
+        },
+
         renderToSettings(container) {
             const row = document.createElement('div');
             row.className = 'settings-row';
@@ -2600,19 +2982,144 @@ function filterLogs(entries, opts) {
         _selected: new Set(),
         _deleting: false,
         _progress: { current: 0, total: 0 },
+        _batchMode: false,
 
         init() {
             this._selected = new Set();
+            this._batchMode = false;
             Logger.info('BatchDeleteModule initialized');
         },
 
         destroy() {
             this._selected.clear();
             this._deleting = false;
+            this._batchMode = false;
+            this.removeNativeUI();
         },
 
         onUserChange() {
             this._selected.clear();
+            this._batchMode = false;
+        },
+
+        // --- Native UI: Sidebar batch toolbar ---
+        injectNativeUI() {
+            const TOOLBAR_ID = 'gc-batch-toolbar';
+            if (document.getElementById(TOOLBAR_ID)) return;
+
+            const sidebar = NativeUI.getSidebar();
+            if (!sidebar) return;
+
+            const toolbar = document.createElement('div');
+            toolbar.id = TOOLBAR_ID;
+            toolbar.style.cssText = 'padding:4px 12px;border-bottom:1px solid rgba(255,255,255,0.06);';
+
+            if (this._batchMode) {
+                this._renderBatchToolbar(toolbar);
+            } else {
+                const enterBtn = document.createElement('button');
+                enterBtn.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.1);color:#9aa0a6;border-radius:8px;padding:4px 10px;font-size:11px;cursor:pointer;width:100%;';
+                enterBtn.textContent = NativeUI.t('🗑️ 批量管理', '🗑️ Batch Manage');
+                enterBtn.onmouseenter = () => { enterBtn.style.color = '#e8eaed'; };
+                enterBtn.onmouseleave = () => { enterBtn.style.color = '#9aa0a6'; };
+                enterBtn.onclick = () => {
+                    this._batchMode = true;
+                    this._refreshNativeUI();
+                };
+                toolbar.appendChild(enterBtn);
+            }
+
+            // Insert after folder filter bar (if present), otherwise after "new chat" button
+            const folderFilter = document.getElementById('gc-folder-filter');
+            if (folderFilter && folderFilter.parentElement) {
+                folderFilter.parentElement.insertBefore(toolbar, folderFilter.nextSibling);
+            } else {
+                const newChatBtn = sidebar.querySelector('a[href="/app"], button[data-test-id="new-chat"]');
+                if (newChatBtn && newChatBtn.parentElement) {
+                    newChatBtn.parentElement.insertBefore(toolbar, newChatBtn.nextSibling);
+                } else {
+                    sidebar.prepend(toolbar);
+                }
+            }
+        },
+
+        removeNativeUI() {
+            NativeUI.remove('gc-batch-toolbar');
+            // Remove all injected checkboxes
+            document.querySelectorAll('.gc-batch-check').forEach(el => el.remove());
+            this._batchMode = false;
+        },
+
+        _refreshNativeUI() {
+            NativeUI.remove('gc-batch-toolbar');
+            document.querySelectorAll('.gc-batch-check').forEach(el => el.remove());
+            this.injectNativeUI();
+            if (this._batchMode) this._injectCheckboxes();
+        },
+
+        _renderBatchToolbar(toolbar) {
+            toolbar.style.cssText = 'padding:6px 12px;border-bottom:1px solid rgba(255,255,255,0.06);display:flex;align-items:center;gap:6px;flex-wrap:wrap;';
+
+            const selectAllBtn = document.createElement('button');
+            selectAllBtn.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.1);color:#9aa0a6;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;';
+            selectAllBtn.textContent = NativeUI.t('全选', 'Select All');
+            selectAllBtn.onclick = () => {
+                const chats = this._scanChats();
+                chats.forEach(c => this._selected.add(c.id));
+                this._refreshNativeUI();
+            };
+
+            const cancelBtn = document.createElement('button');
+            cancelBtn.style.cssText = 'background:transparent;border:1px solid rgba(255,255,255,0.1);color:#9aa0a6;border-radius:6px;padding:2px 8px;font-size:10px;cursor:pointer;';
+            cancelBtn.textContent = NativeUI.t('取消', 'Cancel');
+            cancelBtn.onclick = () => {
+                this._batchMode = false;
+                this._selected.clear();
+                this._refreshNativeUI();
+            };
+
+            const countLabel = document.createElement('span');
+            countLabel.style.cssText = 'font-size:10px;color:#8ab4f8;flex:1;text-align:center;';
+            countLabel.textContent = NativeUI.t('已选 ' + this._selected.size + ' 个', this._selected.size + ' selected');
+
+            toolbar.appendChild(selectAllBtn);
+            toolbar.appendChild(cancelBtn);
+            toolbar.appendChild(countLabel);
+
+            if (this._selected.size > 0) {
+                const deleteBtn = document.createElement('button');
+                deleteBtn.style.cssText = 'background:#ea4335;color:#fff;border:none;border-radius:6px;padding:2px 10px;font-size:10px;cursor:pointer;';
+                deleteBtn.textContent = NativeUI.t('🗑️ 删除', '🗑️ Delete');
+                deleteBtn.onclick = () => {
+                    if (confirm(NativeUI.t('确认删除选中的 ' + this._selected.size + ' 个对话？', 'Delete ' + this._selected.size + ' selected conversation(s)?'))) {
+                        this._batchDelete();
+                    }
+                };
+                toolbar.appendChild(deleteBtn);
+            }
+        },
+
+        _injectCheckboxes() {
+            const chats = Core.scanSidebarChats();
+            chats.forEach(chat => {
+                if (chat.element.querySelector('.gc-batch-check')) return;
+                const check = document.createElement('div');
+                check.className = 'gc-batch-check';
+                const isChecked = this._selected.has(chat.id);
+                check.style.cssText = 'width:16px;height:16px;border-radius:3px;border:2px solid ' + (isChecked ? '#8ab4f8' : '#5f6368') + ';background:' + (isChecked ? '#8ab4f8' : 'transparent') + ';flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#fff;cursor:pointer;margin-right:6px;vertical-align:middle;';
+                check.textContent = isChecked ? '\u2713' : '';
+                check.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    if (this._selected.has(chat.id)) {
+                        this._selected.delete(chat.id);
+                    } else {
+                        this._selected.add(chat.id);
+                    }
+                    this._refreshNativeUI();
+                };
+                chat.element.insertBefore(check, chat.element.firstChild);
+            });
         },
 
         _scanChats() {
@@ -2808,6 +3315,21 @@ function filterLogs(entries, opts) {
             }
 
             container.appendChild(section);
+        },
+
+        getOnboarding() {
+            return {
+                zh: {
+                    rant: 'Gemini 的删除对话功能：打开菜单 → 点删除 → 确认 → 等待。一个对话要 4 次点击。你有 50 个测试对话要清理？那就点 200 次吧，Google 工程师显然没有清理过自己的对话列表。也可能他们写了个内部工具，只是懒得给你用。',
+                    features: '在侧边栏添加批量管理工具栏。激活后每个对话出现复选框，勾选后一键批量删除。支持全选/反选。',
+                    guide: '1. 点击侧边栏的"🗑️ 批量管理" → 2. 勾选要删除的对话 → 3. 点击"删除" → 4. 确认'
+                },
+                en: {
+                    rant: "Deleting a Gemini conversation: open menu → click delete → confirm → wait. 4 clicks per conversation. Have 50 test chats to clean up? That's 200 clicks. Google engineers clearly never clean up their own conversation lists. Or maybe they have an internal tool, they just can't be bothered to give it to you.",
+                    features: 'Adds a batch management toolbar to the sidebar. When activated, checkboxes appear on each conversation for one-click batch deletion. Supports select all/deselect.',
+                    guide: '1. Click "🗑️ Batch Manage" in the sidebar → 2. Check conversations to delete → 3. Click "Delete" → 4. Confirm'
+                }
+            };
         }
     };
 
@@ -3037,9 +3559,50 @@ function filterLogs(entries, opts) {
             }
             // Restore title
             document.title = 'Google Gemini';
+            this.removeNativeUI();
         },
 
         onUserChange() {},
+
+        // --- 原生 UI 注入 ---
+        injectNativeUI() {
+            const IND_ID = 'gc-tweaks-indicator';
+            if (document.getElementById(IND_ID)) return;
+
+            const inputArea = NativeUI.getInputArea();
+            if (!inputArea) return;
+
+            const dots = document.createElement('div');
+            dots.id = IND_ID;
+            dots.style.cssText = 'display:flex;gap:3px;position:absolute;bottom:4px;right:4px;pointer-events:none;z-index:1;';
+            dots.title = this._getStatusText();
+
+            const keys = ['ctrlEnter', 'tabTitle', 'chatWidth'];
+            keys.forEach(key => {
+                const dot = document.createElement('div');
+                const on = this.features[key]?.enabled;
+                dot.style.cssText = 'width:4px;height:4px;border-radius:50%;background:' + (on ? '#8ab4f8' : '#555') + ';transition:background 0.2s;';
+                dots.appendChild(dot);
+            });
+
+            const pos = getComputedStyle(inputArea).position;
+            if (pos === 'static' || pos === '') inputArea.style.position = 'relative';
+            inputArea.appendChild(dots);
+        },
+
+        removeNativeUI() {
+            NativeUI.remove('gc-tweaks-indicator');
+        },
+
+        _getStatusText() {
+            const items = [];
+            if (this.features.ctrlEnter.enabled) items.push('Ctrl+Enter: ON');
+            if (this.features.tabTitle.enabled) items.push('Tab Title: ON');
+            if (this.features.chatWidth.enabled) items.push('Chat Width: ' + this.features.chatWidth.value + 'px');
+            if (this.features.sidebarWidth.enabled) items.push('Sidebar: ' + this.features.sidebarWidth.value + 'px');
+            if (this.features.hideGems.enabled) items.push('Hide Gems: ON');
+            return items.length > 0 ? items.join(' | ') : 'All tweaks off';
+        },
 
         _save() {
             GM_setValue(this.STORAGE_KEY, this.features);
@@ -3152,6 +3715,8 @@ function filterLogs(entries, opts) {
             this.features[key].enabled = !this.features[key].enabled;
             this._save();
             this._applyAll();
+            this.removeNativeUI();
+            this.injectNativeUI();
         },
 
         setFeatureValue(key, value) {
@@ -3159,6 +3724,21 @@ function filterLogs(entries, opts) {
             this.features[key].value = value;
             this._save();
             this._applyAll();
+        },
+
+        getOnboarding() {
+            return {
+                zh: {
+                    rant: 'Gemini 不支持 Ctrl+Enter 发送，Enter 直接发送意味着你永远不能在消息里换行——除非你知道 Shift+Enter 这个隐藏快捷键。浏览器标签页标题永远显示"Gemini"，开了 10 个对话标签？全是 Gemini - Gemini - Gemini。Google 的 UX 团队是不是觉得用户只用一个标签页？',
+                    features: '三个微调开关：Ctrl+Enter 发送、标签页显示对话标题、布局优化。输入框旁 3 个小圆点显示当前状态。',
+                    guide: '1. 在设置中开启需要的调整项\n2. 输入框右下角的小圆点指示哪些调整已生效\n3. 亮蓝色=已启用'
+                },
+                en: {
+                    rant: "Gemini doesn't support Ctrl+Enter to send. Enter sends immediately, meaning you can never add newlines — unless you know the secret Shift+Enter shortcut. Browser tab title always shows 'Gemini' — open 10 chat tabs? All 'Gemini - Gemini - Gemini'. Does the UX team think users only use one tab?",
+                    features: 'Three micro-tweaks: Ctrl+Enter to send, tab title shows conversation name, layout adjustments. Three tiny dots near the input area show current status.',
+                    guide: '1. Enable desired tweaks in Settings\n2. Dots at the bottom-right of the input area indicate active tweaks\n3. Blue = enabled'
+                }
+            };
         },
 
         renderToSettings(container) {
@@ -3208,6 +3788,67 @@ function filterLogs(entries, opts) {
     };
 
     ModuleRegistry.register(UITweaksModule);
+
+    // ╔══════════════════════════════════════════════════════════════════════════╗
+    // ║                    NATIVE UI INJECTION (原生 UI 注入框架)                    ║
+    // ╚══════════════════════════════════════════════════════════════════════════╝
+
+    const NativeUI = {
+        isZH: navigator.language.startsWith('zh'),
+        t(zh, en) { return this.isZH ? zh : en; },
+
+        _findFirst(selectors) {
+            for (const sel of selectors) {
+                const el = document.querySelector(sel);
+                if (el) return el;
+            }
+            return null;
+        },
+
+        remove(id) {
+            const el = document.getElementById(id);
+            if (el) el.remove();
+        },
+
+        getSidebar() {
+            return this._findFirst([
+                'bard-sidenav-container',
+                'nav[role="navigation"]'
+            ]);
+        },
+
+        getInputArea() {
+            return this._findFirst([
+                'input-area-v2',
+                '.input-area-container',
+                '.bottom-container'
+            ]);
+        },
+
+        getChatHeader() {
+            return this._findFirst([
+                'h1.conversation-title',
+                '[data-test-id="conversation-title"]'
+            ]);
+        },
+
+        getModelSwitch() {
+            return this._findFirst([
+                'button.input-area-switch',
+                '[data-test-id="bard-mode-menu-button"]'
+            ]);
+        },
+
+        // Called every tick from main loop
+        tick() {
+            ModuleRegistry.enabledModules.forEach(id => {
+                const mod = ModuleRegistry.modules[id];
+                if (typeof mod?.injectNativeUI === 'function') {
+                    try { mod.injectNativeUI(); } catch (e) { /* silent */ }
+                }
+            });
+        }
+    };
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                          PANEL UI (面板界面)                               ║
@@ -3560,6 +4201,78 @@ function filterLogs(entries, opts) {
                     font-size: 11px; color: var(--text-main);
                 }
                 .module-compact-label .module-icon { font-size: 14px; }
+
+                /* Onboarding Modal */
+                .onboarding-overlay {
+                    position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
+                    background: var(--overlay-tint, rgba(0,0,0,0.7)); z-index: 2147483647;
+                    display: flex; align-items: center; justify-content: center;
+                }
+                .onboarding-modal {
+                    width: 400px; max-width: 92vw; max-height: 80vh; overflow-y: auto;
+                    background: var(--bg, #202124); border: 1px solid var(--border, rgba(255,255,255,0.1));
+                    border-radius: 20px; box-shadow: 0 12px 48px rgba(0,0,0,0.6);
+                    font-family: 'Google Sans', Roboto, sans-serif;
+                }
+                .onboarding-header {
+                    padding: 16px 20px; border-bottom: 1px solid var(--divider, rgba(255,255,255,0.08));
+                    display: flex; justify-content: space-between; align-items: center;
+                }
+                .onboarding-header h3 { margin: 0; font-size: 16px; color: var(--text-main, #fff); font-weight: 500; }
+                .onboarding-close { cursor: pointer; font-size: 18px; color: var(--text-sub, #9aa0a6); }
+                .onboarding-close:hover { color: var(--accent, #8ab4f8); }
+                .onboarding-body { padding: 16px 20px; }
+                .onboarding-section { margin-bottom: 16px; }
+                .onboarding-section-title {
+                    font-size: 13px; font-weight: 600; color: var(--accent, #8ab4f8);
+                    margin-bottom: 6px;
+                }
+                .onboarding-text {
+                    font-size: 12px; color: var(--text-sub, #9aa0a6); line-height: 1.6;
+                    white-space: pre-line;
+                }
+                .onboarding-footer {
+                    padding: 12px 20px; border-top: 1px solid var(--divider, rgba(255,255,255,0.08));
+                    display: flex; justify-content: space-between; align-items: center;
+                }
+                .onboarding-lang-btn {
+                    background: var(--btn-bg, rgba(255,255,255,0.06)); border: 1px solid var(--border);
+                    color: var(--text-sub); border-radius: 8px; padding: 4px 10px;
+                    font-size: 11px; cursor: pointer;
+                }
+                .onboarding-lang-btn:hover { color: var(--text-main); }
+                .onboarding-start-btn {
+                    background: var(--accent, #8ab4f8); color: #000; border: none;
+                    border-radius: 8px; padding: 6px 16px; font-size: 12px;
+                    font-weight: 600; cursor: pointer;
+                }
+                .onboarding-start-btn:hover { opacity: 0.9; }
+                .onboarding-info-btn {
+                    font-size: 11px; color: var(--text-sub, #9aa0a6); cursor: pointer;
+                    opacity: 0.5; margin-left: 4px;
+                }
+                .onboarding-info-btn:hover { opacity: 1; color: var(--accent, #8ab4f8); }
+
+                /* Native UI shared styles */
+                .gc-native-btn {
+                    background: transparent; border: none; cursor: pointer;
+                    font-size: 16px; padding: 4px 6px; border-radius: 50%;
+                    transition: background 0.2s;
+                    line-height: 1;
+                }
+                .gc-native-btn:hover { background: rgba(128,128,128,0.2); }
+                .gc-dropdown-menu {
+                    position: absolute; z-index: 2147483646;
+                    background: var(--bg, #303134); border: 1px solid rgba(255,255,255,0.12);
+                    border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
+                    padding: 4px 0; min-width: 160px;
+                    font-family: 'Google Sans', Roboto, sans-serif;
+                }
+                .gc-dropdown-item {
+                    padding: 8px 16px; font-size: 13px; color: #e8eaed;
+                    cursor: pointer; display: flex; align-items: center; gap: 8px;
+                }
+                .gc-dropdown-item:hover { background: rgba(255,255,255,0.08); }
             `);
         },
 
@@ -4112,6 +4825,22 @@ function filterLogs(entries, opts) {
                 label.appendChild(icon);
                 label.appendChild(name);
 
+                const rightSide = document.createElement('div');
+                rightSide.style.cssText = 'display:flex;align-items:center;gap:6px;';
+
+                // ⓘ info button for onboarding
+                if (typeof mod.getOnboarding === 'function') {
+                    const infoBtn = document.createElement('span');
+                    infoBtn.className = 'onboarding-info-btn';
+                    infoBtn.textContent = '\u24D8';
+                    infoBtn.title = 'Show guide';
+                    infoBtn.onclick = (e) => {
+                        e.stopPropagation();
+                        PanelUI.showOnboarding(mod.id);
+                    };
+                    rightSide.appendChild(infoBtn);
+                }
+
                 const toggle = document.createElement('div');
                 toggle.className = `toggle-switch ${ModuleRegistry.isEnabled(mod.id) ? 'on' : ''}`;
                 toggle.onclick = () => {
@@ -4122,9 +4851,10 @@ function filterLogs(entries, opts) {
                         PanelUI.renderDetailsPane();
                     }
                 };
+                rightSide.appendChild(toggle);
 
                 row.appendChild(label);
-                row.appendChild(toggle);
+                row.appendChild(rightSide);
                 extSection.appendChild(row);
             });
             body.appendChild(extSection);
@@ -4394,11 +5124,126 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v8.12 (Modular)';
+            version.textContent = 'Gemini Assistant v9.2 (Native UI)';
             body.appendChild(version);
 
             modal.appendChild(header);
             modal.appendChild(body);
+            overlay.appendChild(modal);
+            document.body.appendChild(overlay);
+        },
+
+        // --- Onboarding Modal ---
+        showOnboarding(moduleId) {
+            const mod = ModuleRegistry.modules[moduleId];
+            if (!mod || typeof mod.getOnboarding !== 'function') return;
+
+            const content = mod.getOnboarding();
+            if (!content) return;
+
+            let lang = GM_getValue(GLOBAL_KEYS.ONBOARDING_LANG, 'zh');
+            const MODAL_ID = 'gemini-onboarding-modal';
+            const existing = document.getElementById(MODAL_ID);
+            if (existing) existing.remove();
+
+            const overlay = document.createElement('div');
+            overlay.id = MODAL_ID;
+            overlay.className = 'onboarding-overlay';
+            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+
+            const modal = document.createElement('div');
+            modal.className = 'onboarding-modal';
+            Core.applyTheme(modal, currentTheme);
+
+            const renderContent = () => {
+                modal.replaceChildren();
+                const t = content[lang] || content.zh || content.en;
+
+                // Header
+                const header = document.createElement('div');
+                header.className = 'onboarding-header';
+                const title = document.createElement('h3');
+                title.textContent = mod.icon + ' ' + mod.name;
+                const closeBtn = document.createElement('span');
+                closeBtn.className = 'onboarding-close';
+                closeBtn.textContent = '\u2715';
+                closeBtn.onclick = () => overlay.remove();
+                header.appendChild(title);
+                header.appendChild(closeBtn);
+                modal.appendChild(header);
+
+                // Body
+                const body = document.createElement('div');
+                body.className = 'onboarding-body';
+
+                // Rant section
+                if (t.rant) {
+                    const sec1 = document.createElement('div');
+                    sec1.className = 'onboarding-section';
+                    const h1 = document.createElement('div');
+                    h1.className = 'onboarding-section-title';
+                    h1.textContent = lang === 'zh' ? '\uD83D\uDCA2 \u4E3A\u4EC0\u4E48\u9700\u8981\u8FD9\u4E2A\uFF1F' : '\uD83D\uDCA2 Why does this exist?';
+                    const p1 = document.createElement('div');
+                    p1.className = 'onboarding-text';
+                    p1.textContent = t.rant;
+                    sec1.appendChild(h1);
+                    sec1.appendChild(p1);
+                    body.appendChild(sec1);
+                }
+
+                // Features section
+                if (t.features) {
+                    const sec2 = document.createElement('div');
+                    sec2.className = 'onboarding-section';
+                    const h2 = document.createElement('div');
+                    h2.className = 'onboarding-section-title';
+                    h2.textContent = lang === 'zh' ? '\u2728 \u5B83\u80FD\u505A\u4EC0\u4E48\uFF1F' : '\u2728 What does it do?';
+                    const p2 = document.createElement('div');
+                    p2.className = 'onboarding-text';
+                    p2.textContent = t.features;
+                    sec2.appendChild(h2);
+                    sec2.appendChild(p2);
+                    body.appendChild(sec2);
+                }
+
+                // Guide section
+                if (t.guide) {
+                    const sec3 = document.createElement('div');
+                    sec3.className = 'onboarding-section';
+                    const h3el = document.createElement('div');
+                    h3el.className = 'onboarding-section-title';
+                    h3el.textContent = lang === 'zh' ? '\uD83C\uDFAF \u5982\u4F55\u4F7F\u7528\uFF1F' : '\uD83C\uDFAF How to use?';
+                    const p3 = document.createElement('div');
+                    p3.className = 'onboarding-text';
+                    p3.textContent = t.guide;
+                    sec3.appendChild(h3el);
+                    sec3.appendChild(p3);
+                    body.appendChild(sec3);
+                }
+
+                modal.appendChild(body);
+
+                // Footer
+                const footer = document.createElement('div');
+                footer.className = 'onboarding-footer';
+                const langBtn = document.createElement('button');
+                langBtn.className = 'onboarding-lang-btn';
+                langBtn.textContent = lang === 'zh' ? '\uD83C\uDF10 EN' : '\uD83C\uDF10 \u4E2D';
+                langBtn.onclick = () => {
+                    lang = lang === 'zh' ? 'en' : 'zh';
+                    GM_setValue(GLOBAL_KEYS.ONBOARDING_LANG, lang);
+                    renderContent();
+                };
+                const startBtn = document.createElement('button');
+                startBtn.className = 'onboarding-start-btn';
+                startBtn.textContent = lang === 'zh' ? '\u5F00\u59CB\u4F7F\u7528 \u2192' : 'Get Started \u2192';
+                startBtn.onclick = () => overlay.remove();
+                footer.appendChild(langBtn);
+                footer.appendChild(startBtn);
+                modal.appendChild(footer);
+            };
+
+            renderContent();
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
         },
@@ -5049,11 +5894,31 @@ function filterLogs(entries, opts) {
                 PanelUI.update();
             }
         }
+
+        // Tick native UI injections for enabled modules
+        NativeUI.tick();
     }
 
     // --- 初始化 ---
     PanelUI.injectStyles();
     ModuleRegistry.init();
+
+    // Upgrade onboarding: show for already-enabled modules that haven't been seen
+    {
+        const seen = GM_getValue(GLOBAL_KEYS.ONBOARDING, {});
+        let updated = false;
+        ModuleRegistry.enabledModules.forEach(id => {
+            const mod = ModuleRegistry.modules[id];
+            if (!seen[id] && typeof mod?.getOnboarding === 'function') {
+                // Defer to avoid blocking init; show one at a time
+                setTimeout(() => PanelUI.showOnboarding(id), 2000);
+                seen[id] = true;
+                updated = true;
+            }
+        });
+        if (updated) GM_setValue(GLOBAL_KEYS.ONBOARDING, seen);
+    }
+
     let pollTimer = setInterval(checkUserAndPanel, TIMINGS.POLL_INTERVAL);
 
     // 窗口聚焦/隐藏 — 暂停轮询 + 自动同步

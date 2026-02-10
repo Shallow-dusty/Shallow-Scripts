@@ -13,7 +13,7 @@ A Tampermonkey userscript collection providing message counting functionality fo
 | `GeminiCounter_Lite.user.js` | Minimal counter, fixed position, no UI |
 | `GeminiCounter_Simple.user.js` | Glass UI, draggable, multi-tab sync, single counter |
 | `GeminiCounter_Standard.user.js` | Dashboard with session/chat/lifetime views |
-| `GeminiCounter_Ultimate.user.js` | Multi-user isolation, themes, daily quotas, heatmaps (recommended) |
+| `GeminiCounter_Ultimate.user.js` | Multi-user isolation, themes, daily quotas, heatmaps, 8 modular extensions (~6100 lines) (recommended) |
 
 ## Architecture
 
@@ -36,14 +36,21 @@ Ultimate 版本采用模块化架构，支持功能扩展：
 │  - Theme mgmt   │  │  - toggle()     │  │  - update()     │
 │  - Storage      │  │  - isEnabled()  │  │  - Settings     │
 │  - URL utils    │  │  - notify()     │  │  - Dashboard    │
+│  - sleep()      │  │                 │  │  - DetailsPane  │
+│  - scanChats()  │  │                 │  │                 │
 └─────────────────┘  └─────────────────┘  └─────────────────┘
                               │
-          ┌───────────────────┼───────────────────┐
-          ▼                   ▼                   ▼
-┌─────────────────┐  ┌─────────────────┐  ┌─────────────────┐
-│ CounterModule   │  │ FoldersModule   │  │  [Future Mod]   │
-│  (default: on)  │  │  (default: off) │  │                 │
-└─────────────────┘  └─────────────────┘  └─────────────────┘
+  ┌──────────┬──────────┬─────┴─────┬──────────┬──────────┐
+  ▼          ▼          ▼           ▼          ▼          ▼
+┌────────┐┌────────┐┌────────┐┌──────────┐┌────────┐┌────────┐
+│Counter ││Export  ││Folders ││PromptVault││Default ││Batch   │
+│Module  ││Module  ││Module  ││Module    ││Model   ││Delete  │
+│(on)    ││(off)   ││(off)   ││(off)     ││(off)   ││(off)   │
+└────────┘└────────┘└────────┘└──────────┘└────────┘└────────┘
+                                  ┌──────────┐┌────────┐
+                                  │QuoteReply││UITweaks│
+                                  │(off)     ││(off)   │
+                                  └──────────┘└────────┘
 ```
 
 ### Module Interface
@@ -61,6 +68,13 @@ Ultimate 版本采用模块化架构，支持功能扩展：
   init(),                    // 初始化 (启用时调用)
   destroy(),                 // 销毁 (禁用时调用)
   onUserChange(user),        // 用户切换通知
+
+  // 可选方法:
+  renderToDetailsPane(container), // 渲染到面板详情区
+  renderToSettings(container),    // 渲染到设置面板
+  injectNativeUI(),               // 注入原生 UI 元素到 Gemini 界面 (v9.2+)
+  removeNativeUI(),               // 清理注入的原生 UI 元素 (v9.2+)
+  getOnboarding(),                // 返回 {zh, en} 双语引导内容 (v9.2+)
 }
 ```
 
@@ -77,6 +91,24 @@ All versions share the same detection pattern:
 - `GM_addValueChangeListener` - Multi-tab real-time sync (Simple/Standard/Ultimate)
 - Storage keys prefixed with `gemini_` (Ultimate uses per-user keys: `gemini_store_{email}`)
 - Module enabled state: `gemini_enabled_modules` (array of module IDs)
+- Onboarding seen state: `gemini_onboarding_seen` (object `{moduleId: true}`)
+- Onboarding language: `gemini_onboarding_lang` (`'zh'` or `'en'`)
+
+### NativeUI Injection Framework (v9.2+)
+Modules can inject UI elements into Gemini's native interface via `NativeUI` utility:
+- `NativeUI.t(zh, en)` — bilingual text helper based on `navigator.language`
+- `NativeUI.getSidebar()` / `getInputArea()` / `getChatHeader()` / `getModelSwitch()` — DOM locators with fallback selectors
+- `NativeUI.remove(id)` — cleanup injected elements by ID
+- Main loop calls `mod.injectNativeUI?.()` every 1.5s tick for enabled modules
+- All injected elements use `gc-` prefix for IDs/classes to avoid conflicts
+- `removeNativeUI()` called on module disable/destroy for cleanup
+
+### Module Onboarding System (v9.2+)
+- First-time module enable triggers onboarding modal via `PanelUI.showOnboarding(id)`
+- Bilingual (zh/en) with language toggle, stored in `gemini_onboarding_lang`
+- Seen state persisted in `gemini_onboarding_seen` to prevent repeat display
+- Settings panel has `ⓘ` button per module to manually re-trigger onboarding
+- Upgrade path: existing enabled modules get deferred onboarding on script load
 
 ### CSP Compliance (Critical)
 Google Gemini enforces strict Content Security Policy. All DOM must be created via native APIs:
