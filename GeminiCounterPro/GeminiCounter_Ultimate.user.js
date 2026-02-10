@@ -1,7 +1,7 @@
 // ==UserScript==
-// @name         Gemini Counter Ultimate (v9.0)
+// @name         Gemini Counter Ultimate (v8.12)
 // @namespace    http://tampermonkey.net/
-// @version      9.0
+// @version      8.12
 // @description  模块化架构：可扩展的 Gemini 助手平台 - 计数器 + 热力图 + 配额追踪 + 对话文件夹 (Pure Enhancement)
 // @author       Script Weaver
 // @match        https://gemini.google.com/*
@@ -18,7 +18,7 @@
 (function () {
     'use strict';
 
-    console.log("💎 Gemini Assistant v9.0 (Full Feature Platform) Starting...");
+    console.log("💎 Gemini Assistant v8.12 (Modular - Pure Enhancement) Starting...");
 
     // ╔══════════════════════════════════════════════════════════════════════════╗
     // ║                           CORE LAYER (核心层)                              ║
@@ -4312,7 +4312,7 @@ function filterLogs(entries, opts) {
             // Version
             const version = document.createElement('div');
             version.className = 'settings-version';
-            version.textContent = 'Gemini Assistant v9.0 (Full Feature Platform)';
+            version.textContent = 'Gemini Assistant v8.12 (Modular)';
             body.appendChild(version);
 
             modal.appendChild(header);
