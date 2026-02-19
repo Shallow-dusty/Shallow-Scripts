@@ -143,21 +143,7 @@ Extracts Google account email from DOM elements (`img[alt*="@"]`, `button[aria-l
 
 ## Testing
 
-### Automated Tests
-Reusable modules under `lib/` have unit tests with **100% coverage** enforced:
-```bash
-npm test          # runs: c8 --100 node --test
-```
-- Test runner: Node.js built-in `node:test`
-- Coverage tool: `c8` (configured in `.c8rc.json`, targets `lib/**/*.js`)
-- Tests location: `tests/`
-
-### Logger Module Sync
-`lib/debug_logger.js` is the source of truth. Use the sync script to inject it into the userscript:
-```bash
-node scripts/sync_logger.js
-```
-This replaces content between `// <LOGGER_MODULE>` and `// </LOGGER_MODULE>` markers in `GeminiCounter_Ultimate.user.js`.
+> **Note**: Automated tests (lib/, tests/, c8 coverage) have been migrated to the standalone [gemini-primer-pp](https://github.com/user/gemini-primer-pp) repository.
 
 ### Manual Testing
 For UI and integration testing:
