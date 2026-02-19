@@ -54,7 +54,9 @@
     let count = GM_getValue(COUNTER_KEY, 0);
     let lastCountTime = 0;
 
-    const savedPos = GM_getValue(PANEL_POS_KEY, { top: 'auto', left: 'auto', bottom: '85px', right: '30px' });
+    function loadSavedPos() {
+        return GM_getValue(PANEL_POS_KEY, { top: 'auto', left: 'auto', bottom: '85px', right: '30px' });
+    }
 
     // --- 📡 核心升级：多窗口同步监听 ---
     // 类似于 C++ 的条件变量/信号槽，监听共享内存的变化
@@ -196,6 +198,7 @@
     function createPanel() {
         const container = document.createElement('div');
         container.id = PANEL_ID;
+        const savedPos = loadSavedPos();
         const winW = window.innerWidth, winH = window.innerHeight;
         const l = parseFloat(savedPos.left), t = parseFloat(savedPos.top);
 

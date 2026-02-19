@@ -125,6 +125,100 @@
     const PANEL_ID = 'gemini-monitor-panel-v7';
     const DEFAULT_POS = { top: '20px', left: 'auto', bottom: 'auto', right: '220px' };
     const TEMP_USER = "Guest";
+    const LAYERS = {
+        PANEL: 2147481000,
+        FLOATING: 2147481020,
+        MENU: 2147481030,
+        OVERLAY: 2147481100,
+        MODAL: 2147481110,
+        TOOLTIP: 2147481120
+    };
+
+    const UIA11y = {
+        _states: new WeakMap(),
+        _focusableSelector: [
+            'button:not([disabled])',
+            '[href]',
+            'input:not([disabled])',
+            'select:not([disabled])',
+            'textarea:not([disabled])',
+            '[tabindex]:not([tabindex="-1"])'
+        ].join(','),
+
+        getFocusable(root) {
+            return Array.from(root.querySelectorAll(this._focusableSelector))
+                .filter((el) => {
+                    if (!(el instanceof HTMLElement)) return false;
+                    if (el.hidden) return false;
+                    if (el.getAttribute('aria-hidden') === 'true') return false;
+                    const style = window.getComputedStyle(el);
+                    if (style.display === 'none' || style.visibility === 'hidden') return false;
+                    return true;
+                });
+        },
+
+        setupModal(overlay, modal, { close, label, labelledBy, initialFocus } = {}) {
+            if (!overlay || !modal || typeof close !== 'function') return;
+            const prev = (document.activeElement instanceof HTMLElement) ? document.activeElement : null;
+
+            modal.setAttribute('role', 'dialog');
+            modal.setAttribute('aria-modal', 'true');
+            modal.tabIndex = -1;
+            if (labelledBy) modal.setAttribute('aria-labelledby', labelledBy);
+            if (label) modal.setAttribute('aria-label', label);
+
+            const onKeyDown = (e) => {
+                if (e.key === 'Escape') {
+                    e.preventDefault();
+                    close();
+                    return;
+                }
+                if (e.key !== 'Tab') return;
+                const focusable = this.getFocusable(modal);
+                if (focusable.length === 0) {
+                    e.preventDefault();
+                    modal.focus();
+                    return;
+                }
+                const first = focusable[0];
+                const last = focusable[focusable.length - 1];
+                if (e.shiftKey && document.activeElement === first) {
+                    e.preventDefault();
+                    last.focus();
+                } else if (!e.shiftKey && document.activeElement === last) {
+                    e.preventDefault();
+                    first.focus();
+                }
+            };
+
+            const onOverlayClick = (e) => {
+                if (e.target === overlay) close();
+            };
+
+            document.addEventListener('keydown', onKeyDown, true);
+            overlay.addEventListener('click', onOverlayClick);
+            this._states.set(overlay, { onKeyDown, onOverlayClick, prev });
+
+            requestAnimationFrame(() => {
+                const target = initialFocus || this.getFocusable(modal)[0] || modal;
+                if (target && typeof target.focus === 'function') target.focus();
+            });
+        },
+
+        closeModal(overlay) {
+            if (!overlay) return;
+            const state = this._states.get(overlay);
+            if (state) {
+                document.removeEventListener('keydown', state.onKeyDown, true);
+                overlay.removeEventListener('click', state.onOverlayClick);
+                if (state.prev && document.contains(state.prev) && typeof state.prev.focus === 'function') {
+                    state.prev.focus();
+                }
+                this._states.delete(overlay);
+            }
+            overlay.remove();
+        }
+    };
 
     // --- 📊 Core 状态 ---
     let currentUser = TEMP_USER;
@@ -348,10 +442,27 @@
             if (now.getHours() < resetHour) {
                 now.setDate(now.getDate() - 1);
             }
-            const y = now.getFullYear();
-            const m = String(now.getMonth() + 1).padStart(2, '0');
-            const day = String(now.getDate()).padStart(2, '0');
+            return this.formatDayKey(now);
+        },
+
+        formatDayKey(date) {
+            const y = date.getFullYear();
+            const m = String(date.getMonth() + 1).padStart(2, '0');
+            const day = String(date.getDate()).padStart(2, '0');
             return `${y}-${m}-${day}`;
+        },
+
+        parseDayKey(dayKey) {
+            const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(dayKey || '');
+            if (!m) return new Date(NaN);
+            return new Date(Number(m[1]), Number(m[2]) - 1, Number(m[3]));
+        },
+
+        shiftDayKey(dayKey, days) {
+            const d = this.parseDayKey(dayKey);
+            if (Number.isNaN(d.getTime())) return dayKey;
+            d.setDate(d.getDate() + days);
+            return this.formatDayKey(d);
         }
     };
 
@@ -757,7 +868,8 @@ function filterLogs(entries, opts) {
 
             for (let dateStr of dates) {
                 if (dailyData[dateStr].messages === 0) continue;
-                const d = new Date(dateStr);
+                const d = Core.parseDayKey(dateStr);
+                if (Number.isNaN(d.getTime())) continue;
                 d.setHours(0, 0, 0, 0);
 
                 if (lastDate) {
@@ -773,18 +885,16 @@ function filterLogs(entries, opts) {
 
             // Current streak (timezone-safe: use local date formatting)
             const todayStr = Core.getDayKey(this.resetHour);
-            const todayDate = new Date();
-            if (todayDate.getHours() < this.resetHour) todayDate.setDate(todayDate.getDate() - 1);
-            todayDate.setDate(todayDate.getDate() - 1);
-            const _fmt = (dt) => { const yy = dt.getFullYear(); const mm = String(dt.getMonth()+1).padStart(2,'0'); const dd = String(dt.getDate()).padStart(2,'0'); return `${yy}-${mm}-${dd}`; };
-            const yesterdayStr = _fmt(todayDate);
+            const yesterdayStr = Core.shiftDayKey(todayStr, -1);
+            const startStr = (dailyData[todayStr]?.messages > 0) ? todayStr : yesterdayStr;
 
-            let checkDate = (dailyData[todayStr]?.messages > 0) ? new Date(todayStr) : new Date(yesterdayStr);
+            let checkDate = Core.parseDayKey(startStr);
+            if (Number.isNaN(checkDate.getTime())) return { current: 0, best };
             checkDate.setHours(0, 0, 0, 0);
             let current = 0;
 
             while (true) {
-                const key = _fmt(checkDate);
+                const key = Core.formatDayKey(checkDate);
                 if (dailyData[key] && dailyData[key].messages > 0) {
                     current++;
                     checkDate.setDate(checkDate.getDate() - 1);
@@ -798,10 +908,10 @@ function filterLogs(entries, opts) {
 
         getLast7DaysData() {
             const result = [];
+            const todayKey = Core.getDayKey(this.resetHour);
             for (let i = 6; i >= 0; i--) {
-                const d = new Date();
-                d.setDate(d.getDate() - i);
-                const key = `${d.getFullYear()}-${String(d.getMonth()+1).padStart(2,'0')}-${String(d.getDate()).padStart(2,'0')}`;
+                const key = Core.shiftDayKey(todayKey, -i);
+                const d = Core.parseDayKey(key);
                 result.push({
                     date: key,
                     label: `${d.getMonth() + 1}/${d.getDate()}`,
@@ -884,9 +994,11 @@ function filterLogs(entries, opts) {
 
             const btn = document.createElement('button');
             btn.id = NATIVE_ID;
+            btn.type = 'button';
             btn.className = 'gc-native-btn';
             btn.textContent = '\uD83D\uDCE4';
             btn.title = 'Export conversation';
+            btn.setAttribute('aria-label', 'Export conversation data');
             btn.onclick = (e) => {
                 e.stopPropagation();
                 this._toggleExportMenu(btn);
@@ -911,6 +1023,7 @@ function filterLogs(entries, opts) {
             const menu = document.createElement('div');
             menu.id = MENU_ID;
             menu.className = 'gc-dropdown-menu';
+            menu.setAttribute('role', 'menu');
             menu.style.cssText = 'position:absolute;top:100%;right:0;margin-top:4px;';
 
             const items = [
@@ -920,8 +1033,10 @@ function filterLogs(entries, opts) {
             ];
 
             items.forEach(item => {
-                const el = document.createElement('div');
+                const el = document.createElement('button');
+                el.type = 'button';
                 el.className = 'gc-dropdown-item';
+                el.setAttribute('role', 'menuitem');
                 el.textContent = item.label;
                 el.onclick = (e) => {
                     e.stopPropagation();
@@ -932,6 +1047,13 @@ function filterLogs(entries, opts) {
             });
 
             anchorBtn.parentElement.appendChild(menu);
+            const mRect = menu.getBoundingClientRect();
+            if (mRect.left < 8) {
+                menu.style.left = '0';
+                menu.style.right = 'auto';
+            } else if (mRect.right > window.innerWidth - 8) {
+                menu.style.right = '0';
+            }
 
             // Close on outside click (with AbortController for cleanup)
             if (this._menuAbort) this._menuAbort.abort();
@@ -960,7 +1082,7 @@ function filterLogs(entries, opts) {
 
         _getFilePrefix() {
             const user = Core.getCurrentUser().split('@')[0];
-            const date = new Date().toISOString().slice(0, 10);
+            const date = Core.formatDayKey(new Date());
             return `gemini-counter-${user}-${date}`;
         },
 
@@ -1001,7 +1123,7 @@ function filterLogs(entries, opts) {
         exportMarkdown() {
             const cm = CounterModule;
             const user = Core.getCurrentUser();
-            const now = new Date().toISOString().slice(0, 10);
+            const now = Core.formatDayKey(new Date());
             const streaks = cm.calculateStreaks ? cm.calculateStreaks() : {};
             const lines = [];
             lines.push('# Gemini Usage Report');
@@ -1211,10 +1333,13 @@ function filterLogs(entries, opts) {
 
         _createFilterTab(label, folderId, color) {
             const tab = document.createElement('button');
+            tab.type = 'button';
             tab.className = 'gc-native-btn';
             const isActive = this._activeFilter === folderId;
             tab.style.cssText = `padding:3px 10px;border-radius:14px;font-size:12px;white-space:nowrap;cursor:pointer;border:1px solid ${color || '#8ab4f8'}40;background:${isActive ? (color || '#8ab4f8') + '30' : 'transparent'};color:${isActive ? (color || '#8ab4f8') : '#aaa'};font-weight:${isActive ? '600' : '400'};transition:all 0.15s;`;
             tab.textContent = label;
+            tab.setAttribute('aria-pressed', isActive ? 'true' : 'false');
+            tab.setAttribute('aria-label', `Filter by ${label}`);
             tab.onclick = (e) => {
                 e.stopPropagation();
                 this._activeFilter = folderId;
@@ -1521,13 +1646,13 @@ function filterLogs(entries, opts) {
                     width: 100vw;
                     height: 100vh;
                     background: var(--overlay-tint, rgba(0, 0, 0, 0.6));
-                    z-index: 2147483646;
+                    z-index: ${LAYERS.OVERLAY};
                     display: flex;
                     align-items: center;
                     justify-content: center;
                 }
                 .gf-modal {
-                    width: 280px;
+                    width: min(92vw, 360px);
                     background: var(--bg, #202124);
                     border: 1px solid var(--border, rgba(255, 255, 255, 0.1));
                     border-radius: 16px;
@@ -1568,6 +1693,7 @@ function filterLogs(entries, opts) {
                     cursor: pointer;
                     border: 2px solid transparent;
                     transition: transform 0.2s, border-color 0.2s;
+                    padding: 0;
                 }
                 .gf-color-option:hover {
                     transform: scale(1.1);
@@ -1602,6 +1728,12 @@ function filterLogs(entries, opts) {
                 }
                 .gf-modal-btn:hover {
                     filter: brightness(1.1);
+                }
+                .gf-modal-input:focus-visible,
+                .gf-color-option:focus-visible,
+                .gf-modal-btn:focus-visible {
+                    outline: 2px solid var(--accent, #8ab4f8);
+                    outline-offset: 2px;
                 }
 
                 /* Folder row in details pane */
@@ -1663,6 +1795,9 @@ function filterLogs(entries, opts) {
                     padding: 2px;
                     cursor: pointer;
                     opacity: 0.6;
+                    background: transparent;
+                    border: none;
+                    color: inherit;
                 }
                 .gf-folder-action:hover {
                     opacity: 1;
@@ -1695,12 +1830,20 @@ function filterLogs(entries, opts) {
                     opacity: 0;
                     cursor: pointer;
                     padding: 2px;
+                    background: transparent;
+                    border: none;
+                    color: inherit;
                 }
                 .gf-chat-row:hover .gf-chat-remove {
                     opacity: 0.6;
                 }
                 .gf-chat-remove:hover {
                     opacity: 1;
+                }
+                .gf-folder-action:focus-visible,
+                .gf-chat-remove:focus-visible {
+                    outline: 2px solid var(--accent, #8ab4f8);
+                    outline-offset: 1px;
                 }
 
                 /* Add folder button in details */
@@ -1796,6 +1939,9 @@ function filterLogs(entries, opts) {
                     margin-right: 6px;
                     flex-shrink: 0;
                     cursor: pointer;
+                    background: transparent;
+                    padding: 0;
+                    appearance: none;
                 }
                 .gf-batch-check.checked {
                     background: var(--accent, #8ab4f8);
@@ -1827,9 +1973,11 @@ function filterLogs(entries, opts) {
             title.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
             const titleText = document.createElement('span');
             titleText.textContent = 'Folders';
-            const batchToggle = document.createElement('span');
-            batchToggle.style.cssText = 'font-size: 9px; cursor: pointer; opacity: 0.6;';
+            const batchToggle = document.createElement('button');
+            batchToggle.type = 'button';
+            batchToggle.style.cssText = 'font-size: 9px; cursor: pointer; opacity: 0.6; background: transparent; border: none; color: inherit; padding: 0;';
             batchToggle.textContent = this._batchMode ? '✕ Cancel' : '☑ Select';
+            batchToggle.setAttribute('aria-label', this._batchMode ? 'Cancel batch mode' : 'Enable batch mode');
             batchToggle.onclick = (e) => {
                 e.stopPropagation();
                 this._batchMode = !this._batchMode;
@@ -1958,8 +2106,11 @@ function filterLogs(entries, opts) {
                         chatRow.className = 'gf-chat-row' + (this._batchSelected.has(chat.id) ? ' batch-selected' : '');
 
                         if (this._batchMode) {
-                            const check = document.createElement('div');
+                            const check = document.createElement('button');
+                            check.type = 'button';
                             check.className = 'gf-batch-check' + (this._batchSelected.has(chat.id) ? ' checked' : '');
+                            check.setAttribute('aria-label', `Select ${chat.title}`);
+                            check.setAttribute('aria-pressed', this._batchSelected.has(chat.id) ? 'true' : 'false');
                             check.onclick = (e) => {
                                 e.stopPropagation();
                                 if (this._batchSelected.has(chat.id)) {
@@ -1967,6 +2118,7 @@ function filterLogs(entries, opts) {
                                 } else {
                                     this._batchSelected.add(chat.id);
                                 }
+                                check.setAttribute('aria-pressed', this._batchSelected.has(chat.id) ? 'true' : 'false');
                                 PanelUI.renderDetailsPane();
                             };
                             chatRow.appendChild(check);
@@ -2098,19 +2250,23 @@ function filterLogs(entries, opts) {
             const actions = document.createElement('div');
             actions.className = 'gf-folder-actions';
 
-            const editBtn = document.createElement('span');
+            const editBtn = document.createElement('button');
+            editBtn.type = 'button';
             editBtn.className = 'gf-folder-action';
             editBtn.textContent = '✏️';
             editBtn.title = 'Edit';
+            editBtn.setAttribute('aria-label', `Edit folder ${folder.name}`);
             editBtn.onclick = (e) => {
                 e.stopPropagation();
                 this.showFolderModal(folderId, 'Edit Folder', folder.name, folder.color);
             };
 
-            const deleteBtn = document.createElement('span');
+            const deleteBtn = document.createElement('button');
+            deleteBtn.type = 'button';
             deleteBtn.className = 'gf-folder-action';
             deleteBtn.textContent = '🗑️';
             deleteBtn.title = 'Delete';
+            deleteBtn.setAttribute('aria-label', `Delete folder ${folder.name}`);
             deleteBtn.onclick = (e) => {
                 e.stopPropagation();
                 if (confirm(`Delete "${folder.name}"?`)) {
@@ -2118,10 +2274,12 @@ function filterLogs(entries, opts) {
                 }
             };
 
-            const pinBtn = document.createElement('span');
+            const pinBtn = document.createElement('button');
+            pinBtn.type = 'button';
             pinBtn.className = 'gf-folder-action';
             pinBtn.textContent = folder.pinned ? '📌' : '📍';
             pinBtn.title = folder.pinned ? 'Unpin' : 'Pin to top';
+            pinBtn.setAttribute('aria-label', folder.pinned ? `Unpin folder ${folder.name}` : `Pin folder ${folder.name}`);
             pinBtn.onclick = (e) => {
                 e.stopPropagation();
                 this.toggleFolderPin(folderId);
@@ -2187,8 +2345,11 @@ function filterLogs(entries, opts) {
                     chatRow.className = 'gf-chat-row' + (this._batchSelected.has(chat.id) ? ' batch-selected' : '');
 
                     if (this._batchMode) {
-                        const check = document.createElement('div');
+                        const check = document.createElement('button');
+                        check.type = 'button';
                         check.className = 'gf-batch-check' + (this._batchSelected.has(chat.id) ? ' checked' : '');
+                        check.setAttribute('aria-label', `Select ${chat.title}`);
+                        check.setAttribute('aria-pressed', this._batchSelected.has(chat.id) ? 'true' : 'false');
                         check.onclick = (e) => {
                             e.stopPropagation();
                             if (this._batchSelected.has(chat.id)) {
@@ -2196,6 +2357,7 @@ function filterLogs(entries, opts) {
                             } else {
                                 this._batchSelected.add(chat.id);
                             }
+                            check.setAttribute('aria-pressed', this._batchSelected.has(chat.id) ? 'true' : 'false');
                             PanelUI.renderDetailsPane();
                         };
                         chatRow.appendChild(check);
@@ -2206,10 +2368,12 @@ function filterLogs(entries, opts) {
                     chatTitle.textContent = chat.title.length > 20 ? chat.title.slice(0, 20) + '...' : chat.title;
                     chatTitle.title = chat.title;
 
-                    const removeBtn = document.createElement('span');
+                    const removeBtn = document.createElement('button');
+                    removeBtn.type = 'button';
                     removeBtn.className = 'gf-chat-remove';
                     removeBtn.textContent = '✕';
                     removeBtn.title = 'Remove from folder';
+                    removeBtn.setAttribute('aria-label', `Remove ${chat.title} from folder`);
                     removeBtn.onclick = (e) => {
                         e.stopPropagation();
                         this.moveChatToFolder(chat.id, null);
@@ -2250,13 +2414,14 @@ function filterLogs(entries, opts) {
 
             const overlay = document.createElement('div');
             overlay.className = 'gf-modal-overlay';
-            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            const closeModal = () => UIA11y.closeModal(overlay);
 
             const modal = document.createElement('div');
             modal.className = 'gf-modal';
             Core.applyTheme(modal, currentTheme);
 
             const titleEl = document.createElement('div');
+            titleEl.id = 'gf-modal-title';
             titleEl.className = 'gf-modal-title';
             titleEl.textContent = title;
 
@@ -2271,9 +2436,11 @@ function filterLogs(entries, opts) {
 
             let selectedColor = currentColor;
             this.FOLDER_COLORS.forEach(color => {
-                const colorBtn = document.createElement('div');
+                const colorBtn = document.createElement('button');
+                colorBtn.type = 'button';
                 colorBtn.className = `gf-color-option ${color === selectedColor ? 'selected' : ''}`;
                 colorBtn.style.background = color;
+                colorBtn.setAttribute('aria-label', `Select color ${color}`);
                 colorBtn.onclick = () => {
                     colorsContainer.querySelectorAll('.gf-color-option').forEach(c => c.classList.remove('selected'));
                     colorBtn.classList.add('selected');
@@ -2338,9 +2505,11 @@ function filterLogs(entries, opts) {
                                 rulesData[idx] = { type: 'keyword', value: val };
                             }
                         };
-                        const delBtn = document.createElement('span');
+                        const delBtn = document.createElement('button');
+                        delBtn.type = 'button';
                         delBtn.textContent = '✕';
-                        delBtn.style.cssText = 'cursor: pointer; font-size: 12px; color: var(--text-sub); opacity: 0.6;';
+                        delBtn.style.cssText = 'cursor: pointer; font-size: 12px; color: var(--text-sub); opacity: 0.6; background: transparent; border: none; padding: 2px 4px;';
+                        delBtn.setAttribute('aria-label', 'Delete rule');
                         delBtn.onclick = () => { rulesData.splice(idx, 1); renderRules(); };
                         ruleRow.appendChild(ruleInput);
                         ruleRow.appendChild(delBtn);
@@ -2350,6 +2519,7 @@ function filterLogs(entries, opts) {
                 renderRules();
 
                 const addRuleBtn = document.createElement('button');
+                addRuleBtn.type = 'button';
                 addRuleBtn.style.cssText = 'font-size: 10px; padding: 4px 8px; border-radius: 4px; border: 1px dashed var(--divider, rgba(255,255,255,0.15)); background: transparent; color: var(--text-sub, #9aa0a6); cursor: pointer; margin-top: 4px;';
                 addRuleBtn.textContent = '+ Add Rule';
                 addRuleBtn.onclick = () => { rulesData.push({ type: 'keyword', value: '' }); renderRules(); };
@@ -2364,21 +2534,24 @@ function filterLogs(entries, opts) {
 
             if (isEdit) {
                 const deleteBtn = document.createElement('button');
+                deleteBtn.type = 'button';
                 deleteBtn.className = 'gf-modal-btn danger';
                 deleteBtn.textContent = 'Delete';
                 deleteBtn.onclick = () => {
                     this.deleteFolder(folderId);
-                    overlay.remove();
+                    closeModal();
                 };
                 actionsDiv.appendChild(deleteBtn);
             }
 
             const cancelBtn = document.createElement('button');
+            cancelBtn.type = 'button';
             cancelBtn.className = 'gf-modal-btn secondary';
             cancelBtn.textContent = 'Cancel';
-            cancelBtn.onclick = () => overlay.remove();
+            cancelBtn.onclick = () => closeModal();
 
             const saveBtn = document.createElement('button');
+            saveBtn.type = 'button';
             saveBtn.className = 'gf-modal-btn primary';
             saveBtn.textContent = isEdit ? 'Save' : 'Create';
             saveBtn.onclick = () => {
@@ -2390,7 +2563,7 @@ function filterLogs(entries, opts) {
                 } else {
                     this.createFolder(name, selectedColor);
                 }
-                overlay.remove();
+                closeModal();
             };
 
             actionsDiv.appendChild(cancelBtn);
@@ -2404,6 +2577,11 @@ function filterLogs(entries, opts) {
             modal.appendChild(actionsDiv);
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
+            UIA11y.setupModal(overlay, modal, {
+                close: closeModal,
+                labelledBy: titleEl.id,
+                initialFocus: input
+            });
 
             input.focus();
             input.select();
@@ -2456,9 +2634,11 @@ function filterLogs(entries, opts) {
 
             const btn = document.createElement('button');
             btn.id = NATIVE_ID;
+            btn.type = 'button';
             btn.className = 'gc-native-btn';
             btn.textContent = '\uD83D\uDC8E';
             btn.title = 'Prompt Vault';
+            btn.setAttribute('aria-label', 'Open Prompt Vault quick menu');
             btn.style.cssText = 'background:transparent;border:none;cursor:pointer;font-size:16px;padding:4px 6px;border-radius:50%;transition:background 0.2s;line-height:1;display:flex;align-items:center;';
             btn.onmouseenter = () => { btn.style.background = 'rgba(128,128,128,0.2)'; };
             btn.onmouseleave = () => { btn.style.background = 'transparent'; };
@@ -2484,6 +2664,7 @@ function filterLogs(entries, opts) {
             const menu = document.createElement('div');
             menu.id = MENU_ID;
             menu.className = 'gc-dropdown-menu';
+            menu.setAttribute('role', 'menu');
             menu.style.cssText = 'position:fixed;bottom:60px;max-height:300px;overflow-y:auto;min-width:200px;';
 
             // Position near the button
@@ -2492,10 +2673,12 @@ function filterLogs(entries, opts) {
             menu.style.bottom = (window.innerHeight - rect.top + 4) + 'px';
 
             if (this._prompts.length === 0) {
-                const empty = document.createElement('div');
+                const empty = document.createElement('button');
+                empty.type = 'button';
                 empty.className = 'gc-dropdown-item';
                 empty.style.cssText = 'color:#9aa0a6;font-size:12px;';
                 empty.textContent = '\u8FD8\u6CA1\u6709\u4FDD\u5B58\u7684\u63D0\u793A\u8BCD';
+                empty.disabled = true;
                 menu.appendChild(empty);
             } else {
                 // Group by category, show max 8
@@ -2516,9 +2699,11 @@ function filterLogs(entries, opts) {
 
                     prompts.forEach(p => {
                         if (count >= 8) return;
-                        const item = document.createElement('div');
+                        const item = document.createElement('button');
+                        item.type = 'button';
                         item.className = 'gc-dropdown-item';
                         item.style.fontSize = '12px';
+                        item.setAttribute('role', 'menuitem');
                         item.textContent = p.name;
                         item.title = p.content.substring(0, 80);
                         item.onclick = (e) => {
@@ -2536,9 +2721,11 @@ function filterLogs(entries, opts) {
             const divider = document.createElement('div');
             divider.style.cssText = 'border-top:1px solid rgba(255,255,255,0.08);margin:4px 0;';
             menu.appendChild(divider);
-            const manageLink = document.createElement('div');
+            const manageLink = document.createElement('button');
+            manageLink.type = 'button';
             manageLink.className = 'gc-dropdown-item';
             manageLink.style.cssText = 'font-size:11px;color:#8ab4f8;';
+            manageLink.setAttribute('role', 'menuitem');
             manageLink.textContent = NativeUI.t('管理提示词...', 'Manage prompts...');
             manageLink.onclick = (e) => {
                 e.stopPropagation();
@@ -2552,6 +2739,18 @@ function filterLogs(entries, opts) {
             menu.appendChild(manageLink);
 
             document.body.appendChild(menu);
+            // Keep quick menu within viewport on small screens.
+            const mRect = menu.getBoundingClientRect();
+            if (mRect.right > window.innerWidth - 8) {
+                menu.style.left = Math.max(8, window.innerWidth - mRect.width - 8) + 'px';
+            }
+            if (mRect.left < 8) {
+                menu.style.left = '8px';
+            }
+            if (mRect.top < 8) {
+                menu.style.top = (rect.bottom + 4) + 'px';
+                menu.style.bottom = 'auto';
+            }
 
             // Close on outside click (with AbortController for cleanup)
             if (this._menuAbort) this._menuAbort.abort();
@@ -2634,10 +2833,12 @@ function filterLogs(entries, opts) {
             title.style.cssText = 'display: flex; justify-content: space-between; align-items: center;';
             const titleText = document.createElement('span');
             titleText.textContent = 'Prompt Vault';
-            const addBtn = document.createElement('span');
-            addBtn.style.cssText = 'font-size: 12px; cursor: pointer; opacity: 0.6;';
+            const addBtn = document.createElement('button');
+            addBtn.type = 'button';
+            addBtn.style.cssText = 'font-size: 12px; cursor: pointer; opacity: 0.6; background: transparent; border: none; color: inherit; padding: 0 2px;';
             addBtn.textContent = '+';
             addBtn.title = 'Add new prompt';
+            addBtn.setAttribute('aria-label', 'Add new prompt');
             addBtn.onclick = (e) => {
                 e.stopPropagation();
                 this.showPromptEditor(null);
@@ -2682,20 +2883,26 @@ function filterLogs(entries, opts) {
                     row.onmouseenter = () => actions.style.opacity = '1';
                     row.onmouseleave = () => actions.style.opacity = '0';
 
-                    const insertBtn = document.createElement('span');
-                    insertBtn.style.cssText = 'cursor: pointer; font-size: 10px;';
+                    const insertBtn = document.createElement('button');
+                    insertBtn.type = 'button';
+                    insertBtn.style.cssText = 'cursor: pointer; font-size: 10px; background: transparent; border: none; color: inherit; padding: 0 2px;';
                     insertBtn.textContent = '📋';
                     insertBtn.title = 'Insert into chat';
+                    insertBtn.setAttribute('aria-label', `Insert prompt ${p.name}`);
                     insertBtn.onclick = (e) => { e.stopPropagation(); this.insertPrompt(p.content); };
 
-                    const editBtn = document.createElement('span');
-                    editBtn.style.cssText = 'cursor: pointer; font-size: 10px;';
+                    const editBtn = document.createElement('button');
+                    editBtn.type = 'button';
+                    editBtn.style.cssText = 'cursor: pointer; font-size: 10px; background: transparent; border: none; color: inherit; padding: 0 2px;';
                     editBtn.textContent = '✏️';
+                    editBtn.setAttribute('aria-label', `Edit prompt ${p.name}`);
                     editBtn.onclick = (e) => { e.stopPropagation(); this.showPromptEditor(p); };
 
-                    const delBtn = document.createElement('span');
-                    delBtn.style.cssText = 'cursor: pointer; font-size: 10px;';
+                    const delBtn = document.createElement('button');
+                    delBtn.type = 'button';
+                    delBtn.style.cssText = 'cursor: pointer; font-size: 10px; background: transparent; border: none; color: inherit; padding: 0 2px;';
                     delBtn.textContent = '🗑️';
+                    delBtn.setAttribute('aria-label', `Delete prompt ${p.name}`);
                     delBtn.onclick = (e) => { e.stopPropagation(); this.deletePrompt(p.id); PanelUI.renderDetailsPane(); };
 
                     actions.appendChild(insertBtn);
@@ -2715,7 +2922,7 @@ function filterLogs(entries, opts) {
         showPromptEditor(existing) {
             const overlay = document.createElement('div');
             overlay.className = 'settings-overlay';
-            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            const closeModal = () => UIA11y.closeModal(overlay);
 
             const modal = document.createElement('div');
             modal.className = 'settings-modal';
@@ -2724,11 +2931,14 @@ function filterLogs(entries, opts) {
             const header = document.createElement('div');
             header.className = 'settings-header';
             const h3 = document.createElement('h3');
+            h3.id = 'pv-editor-title';
             h3.textContent = existing ? 'Edit Prompt' : 'New Prompt';
-            const closeBtn = document.createElement('span');
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
             closeBtn.className = 'settings-close';
             closeBtn.textContent = '\u2715';
-            closeBtn.onclick = () => overlay.remove();
+            closeBtn.setAttribute('aria-label', 'Close prompt editor');
+            closeBtn.onclick = () => closeModal();
             header.appendChild(h3);
             header.appendChild(closeBtn);
 
@@ -2753,6 +2963,7 @@ function filterLogs(entries, opts) {
             contentArea.value = existing ? existing.content : '';
 
             const saveBtn = document.createElement('button');
+            saveBtn.type = 'button';
             saveBtn.className = 'settings-btn';
             saveBtn.style.cssText = 'background: var(--accent, #8ab4f8); color: #000; font-weight: 500; margin-top: 8px;';
             saveBtn.textContent = existing ? 'Save' : 'Create';
@@ -2766,7 +2977,7 @@ function filterLogs(entries, opts) {
                 } else {
                     this.addPrompt(name, content, category);
                 }
-                overlay.remove();
+                closeModal();
                 PanelUI.renderDetailsPane();
             };
 
@@ -2778,6 +2989,11 @@ function filterLogs(entries, opts) {
             modal.appendChild(body);
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
+            UIA11y.setupModal(overlay, modal, {
+                close: closeModal,
+                labelledBy: h3.id,
+                initialFocus: nameInput
+            });
             nameInput.focus();
         }
     };
@@ -3109,11 +3325,14 @@ function filterLogs(entries, opts) {
             const chats = Core.scanSidebarChats();
             chats.forEach(chat => {
                 if (chat.element.querySelector('.gc-batch-check')) return;
-                const check = document.createElement('div');
+                const check = document.createElement('button');
+                check.type = 'button';
                 check.className = 'gc-batch-check';
                 const isChecked = this._selected.has(chat.id);
-                check.style.cssText = 'width:16px;height:16px;border-radius:3px;border:2px solid ' + (isChecked ? '#8ab4f8' : '#5f6368') + ';background:' + (isChecked ? '#8ab4f8' : 'transparent') + ';flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#fff;cursor:pointer;margin-right:6px;vertical-align:middle;';
+                check.style.cssText = 'width:16px;height:16px;border-radius:3px;border:2px solid ' + (isChecked ? '#8ab4f8' : '#5f6368') + ';background:' + (isChecked ? '#8ab4f8' : 'transparent') + ';flex-shrink:0;display:inline-flex;align-items:center;justify-content:center;font-size:10px;color:#fff;cursor:pointer;margin-right:6px;vertical-align:middle;padding:0;appearance:none;';
                 check.textContent = isChecked ? '\u2713' : '';
+                check.setAttribute('aria-label', `Select conversation ${chat.title}`);
+                check.setAttribute('aria-pressed', isChecked ? 'true' : 'false');
                 check.onclick = (e) => {
                     e.preventDefault();
                     e.stopPropagation();
@@ -3122,6 +3341,7 @@ function filterLogs(entries, opts) {
                     } else {
                         this._selected.add(chat.id);
                     }
+                    check.setAttribute('aria-pressed', this._selected.has(chat.id) ? 'true' : 'false');
                     this._refreshNativeUI();
                 };
                 chat.element.insertBefore(check, chat.element.firstChild);
@@ -3412,10 +3632,12 @@ function filterLogs(entries, opts) {
         _showFab(x, y, text) {
             this._removeFab();
 
-            const fab = document.createElement('div');
+            const fab = document.createElement('button');
+            fab.type = 'button';
+            fab.setAttribute('aria-label', 'Quote selected text');
             fab.style.cssText = [
                 'position:fixed',
-                'z-index:2147483646',
+                `z-index:${LAYERS.FLOATING}`,
                 'background:var(--accent, #8ab4f8)',
                 'color:#fff',
                 'padding:4px 10px',
@@ -3427,7 +3649,8 @@ function filterLogs(entries, opts) {
                 'user-select:none',
                 'transition:opacity 0.15s, transform 0.15s',
                 'opacity:0',
-                'transform:scale(0.9)'
+                'transform:scale(0.9)',
+                'border:none'
             ].join(';');
             fab.textContent = '💬 Quote';
 
@@ -3779,11 +4002,16 @@ function filterLogs(entries, opts) {
                 }
 
                 // Toggle switch
-                const toggle = document.createElement('div');
+                const toggle = document.createElement('button');
+                toggle.type = 'button';
                 toggle.className = 'toggle-switch ' + (feat.enabled ? 'on' : '');
+                toggle.setAttribute('aria-label', feat.label);
+                toggle.setAttribute('aria-pressed', feat.enabled ? 'true' : 'false');
                 toggle.onclick = () => {
                     this.toggleFeature(key);
                     toggle.classList.toggle('on');
+                    const on = toggle.classList.contains('on');
+                    toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
                 };
                 rightSide.appendChild(toggle);
 
@@ -3871,7 +4099,9 @@ function filterLogs(entries, opts) {
                 #${PANEL_ID} {
                     --bg: #202124; --text-main: #fff; --text-sub: #ccc; --accent: #8ab4f8;
                     --blur: 18px; --saturate: 180%;
-                    position: fixed; z-index: 2147483647; width: 170px;
+                    position: fixed; z-index: ${LAYERS.PANEL};
+                    width: clamp(170px, 22vw, 240px);
+                    min-width: 170px;
                     background: var(--bg);
                     backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
                     -webkit-backdrop-filter: blur(var(--blur)) saturate(var(--saturate));
@@ -3891,7 +4121,7 @@ function filterLogs(entries, opts) {
                 }
                 .user-capsule {
                     display: flex; align-items: center; gap: 4px;
-                    font-size: 10px; color: var(--text-sub);
+                    font-size: 11px; color: var(--text-sub);
                     background: var(--badge-bg, rgba(255,255,255,0.05));
                     padding: 2px 8px; border-radius: 12px; border: 1px solid transparent;
                     max-width: 120px; overflow: hidden;
@@ -3915,7 +4145,8 @@ function filterLogs(entries, opts) {
                 .user-capsule.viewing-other { border-color: #fdbd00; color: #fdbd00; }
                 .user-avatar-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--accent); flex-shrink: 0; }
                 .gemini-toggle-btn { cursor: pointer; font-size: 14px; opacity: 0.6; color: var(--text-sub);
-                    transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1); }
+                    transition: opacity 0.2s cubic-bezier(0.4, 0, 0.2, 1);
+                    background: transparent; border: none; padding: 0; }
                 .gemini-toggle-btn:hover { opacity: 1; color: var(--accent); }
                 .gemini-main-view { padding: 12px 14px 14px; text-align: center; }
                 .gemini-big-num {
@@ -3954,12 +4185,12 @@ function filterLogs(entries, opts) {
                                 background 0.3s cubic-bezier(0.4, 0, 0.2, 1);
                 }
                 .quota-label {
-                    font-size: 9px; color: var(--text-sub); opacity: 0.6;
+                    font-size: 10px; color: var(--text-sub); opacity: 0.8;
                     margin-bottom: 8px; font-family: monospace;
                 }
 
                 .gemini-sub-info {
-                    font-size: 10px; color: var(--text-sub); margin-bottom: 8px;
+                    font-size: 11px; color: var(--text-sub); margin-bottom: 8px;
                     font-family: monospace; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
                 }
                 .gemini-details-view {
@@ -3969,17 +4200,18 @@ function filterLogs(entries, opts) {
                 }
                 .gemini-details-view.expanded { height: auto; opacity: 1; padding: 10px 12px 14px 12px; border-top: 1px solid var(--border); max-height: 420px; overflow-y: auto; }
                 .section-title {
-                    font-size: 9px; color: var(--text-sub); opacity: 0.5;
-                    margin: 8px 0 4px 0; text-transform: uppercase; letter-spacing: 1px;
+                    font-size: 10px; color: var(--text-sub); opacity: 0.72;
+                    margin: 10px 0 6px 0; text-transform: uppercase; letter-spacing: 0.8px;
                 }
                 .detail-row {
                     display: flex; justify-content: space-between; align-items: center;
-                    margin-bottom: 4px; font-size: 11px; color: var(--text-sub); cursor: pointer;
+                    margin-bottom: 4px; font-size: 12px; color: var(--text-sub); cursor: pointer;
                     padding: 5px 8px; border-radius: 6px;
                     transition: background 0.2s cubic-bezier(0.4, 0, 0.2, 1);
                 }
                 .detail-row:hover { background: var(--row-hover); color: var(--text-main); }
                 .detail-row.active-mode { background: rgba(138, 180, 248, 0.15); color: var(--accent); font-weight: 500; }
+                .detail-row:focus-visible { outline: 2px solid var(--accent, #8ab4f8); outline-offset: 1px; }
                 .user-row { justify-content: flex-start; gap: 6px; }
                 .user-row.is-me { border-left: 2px solid var(--accent); }
                 .user-indicator { font-size: 8px; padding: 1px 4px; border-radius: 4px; background: var(--accent); color: #000; }
@@ -3996,11 +4228,12 @@ function filterLogs(entries, opts) {
                 /* Settings Modal */
                 .settings-overlay {
                     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                    background: var(--overlay-tint, rgba(0,0,0,0.6)); z-index: 2147483646;
+                    background: var(--overlay-tint, rgba(0,0,0,0.6)); z-index: ${LAYERS.OVERLAY};
                     display: flex; align-items: center; justify-content: center;
+                    padding: 12px;
                 }
                 .settings-modal {
-                    width: 300px; max-height: 80vh; overflow-y: auto;
+                    width: min(94vw, 460px); max-height: 85vh; overflow-y: auto;
                     background: var(--bg, #202124); border: 1px solid var(--border, rgba(255,255,255,0.1));
                     border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
                     font-family: 'Google Sans', Roboto, sans-serif;
@@ -4037,11 +4270,12 @@ function filterLogs(entries, opts) {
                 /* Debug Modal */
                 .debug-overlay {
                     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                    background: var(--overlay-tint, rgba(0,0,0,0.6)); z-index: 2147483646;
+                    background: var(--overlay-tint, rgba(0,0,0,0.6)); z-index: ${LAYERS.OVERLAY};
                     display: flex; align-items: center; justify-content: center;
+                    padding: 12px;
                 }
                 .debug-modal {
-                    width: 520px; max-width: 95vw; max-height: 85vh; overflow-y: auto;
+                    width: min(96vw, 720px); max-height: 85vh; overflow-y: auto;
                     background: var(--bg, #202124); border: 1px solid var(--border, rgba(255,255,255,0.1));
                     border-radius: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.5);
                     font-family: 'Google Sans', Roboto, sans-serif;
@@ -4094,11 +4328,14 @@ function filterLogs(entries, opts) {
                 .module-icon { font-size: 16px; }
                 .module-text { display: flex; flex-direction: column; }
                 .module-name { font-size: 12px; color: var(--text-main, #fff); }
-                .module-desc { font-size: 9px; color: var(--text-sub, #9aa0a6); opacity: 0.7; }
+                .module-desc { font-size: 10px; color: var(--text-sub, #9aa0a6); opacity: 0.85; }
                 .toggle-switch {
                     position: relative; width: 36px; height: 20px;
                     background: var(--btn-bg, rgba(255,255,255,0.1)); border-radius: 10px;
                     cursor: pointer; transition: background 0.2s;
+                    border: 1px solid var(--divider, rgba(255,255,255,0.12));
+                    padding: 0;
+                    appearance: none;
                 }
                 .toggle-switch.on { background: var(--accent, #8ab4f8); }
                 .toggle-switch::after {
@@ -4111,12 +4348,13 @@ function filterLogs(entries, opts) {
                 /* --- Dashboard Styles --- */
                 .dash-overlay {
                     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                    background: var(--overlay-tint, rgba(0,0,0,0.85)); z-index: 2147483645;
+                    background: var(--overlay-tint, rgba(0,0,0,0.85)); z-index: ${LAYERS.OVERLAY};
                     display: flex; align-items: center; justify-content: center;
                     backdrop-filter: blur(5px);
+                    padding: 12px;
                 }
                 .dash-modal {
-                    width: 800px; max-width: 95vw; max-height: 90vh; overflow-y: auto;
+                    width: min(96vw, 980px); max-width: 96vw; max-height: 90vh; overflow-y: auto;
                     background: var(--bg); border: 1px solid var(--border);
                     border-radius: 24px; box-shadow: 0 20px 60px rgba(0,0,0,0.6);
                     display: flex; flex-direction: column;
@@ -4170,7 +4408,7 @@ function filterLogs(entries, opts) {
                 .g-tooltip {
                     position: fixed; background: rgba(0,0,0,0.9); border: 1px solid var(--border);
                     color: #fff; padding: 4px 8px; border-radius: 4px; font-size: 10px;
-                    pointer-events: none; z-index: 2147483647; opacity: 0; transition: opacity 0.1s;
+                    pointer-events: none; z-index: ${LAYERS.TOOLTIP}; opacity: 0; transition: opacity 0.1s;
                     transform: translate(-50%, -100%); margin-top: -8px;
                     box-shadow: 0 4px 12px rgba(0,0,0,0.5);
                 }
@@ -4190,14 +4428,27 @@ function filterLogs(entries, opts) {
                     margin-bottom: 8px;
                 }
                 .details-tab {
-                    flex: 1; padding: 5px 0; text-align: center;
+                    flex: 1; padding: 6px 4px; text-align: center;
                     font-size: 12px; cursor: pointer; border-radius: 6px;
                     color: var(--text-sub); transition: all 0.2s;
                     background: transparent;
+                    border: 1px solid transparent;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    gap: 4px;
+                    min-height: 30px;
                 }
                 .details-tab:hover { background: var(--row-hover); color: var(--text-main); }
                 .details-tab.active {
                     background: var(--accent); color: #000; font-weight: 600;
+                }
+                .details-tab .tab-label {
+                    font-size: 11px;
+                    max-width: 64px;
+                    overflow: hidden;
+                    text-overflow: ellipsis;
+                    white-space: nowrap;
                 }
 
                 /* Module Toggle Compact */
@@ -4214,11 +4465,12 @@ function filterLogs(entries, opts) {
                 /* Onboarding Modal */
                 .onboarding-overlay {
                     position: fixed; top: 0; left: 0; width: 100vw; height: 100vh;
-                    background: var(--overlay-tint, rgba(0,0,0,0.7)); z-index: 2147483647;
+                    background: var(--overlay-tint, rgba(0,0,0,0.7)); z-index: ${LAYERS.OVERLAY};
                     display: flex; align-items: center; justify-content: center;
+                    padding: 12px;
                 }
                 .onboarding-modal {
-                    width: 400px; max-width: 92vw; max-height: 80vh; overflow-y: auto;
+                    width: min(94vw, 520px); max-width: 94vw; max-height: 84vh; overflow-y: auto;
                     background: var(--bg, #202124); border: 1px solid var(--border, rgba(255,255,255,0.1));
                     border-radius: 20px; box-shadow: 0 12px 48px rgba(0,0,0,0.6);
                     font-family: 'Google Sans', Roboto, sans-serif;
@@ -4259,6 +4511,9 @@ function filterLogs(entries, opts) {
                 .onboarding-info-btn {
                     font-size: 11px; color: var(--text-sub, #9aa0a6); cursor: pointer;
                     opacity: 0.5; margin-left: 4px;
+                    background: transparent;
+                    border: none;
+                    padding: 0 2px;
                 }
                 .onboarding-info-btn:hover { opacity: 1; color: var(--accent, #8ab4f8); }
 
@@ -4271,17 +4526,66 @@ function filterLogs(entries, opts) {
                 }
                 .gc-native-btn:hover { background: rgba(128,128,128,0.2); }
                 .gc-dropdown-menu {
-                    position: absolute; z-index: 2147483646;
+                    position: absolute; z-index: ${LAYERS.MENU};
                     background: var(--bg, #303134); border: 1px solid rgba(255,255,255,0.12);
                     border-radius: 12px; box-shadow: 0 4px 16px rgba(0,0,0,0.4);
-                    padding: 4px 0; min-width: 160px;
+                    padding: 4px 0; min-width: 160px; max-width: min(92vw, 360px);
                     font-family: 'Google Sans', Roboto, sans-serif;
                 }
                 .gc-dropdown-item {
                     padding: 8px 16px; font-size: 13px; color: #e8eaed;
                     cursor: pointer; display: flex; align-items: center; gap: 8px;
+                    width: 100%;
+                    text-align: left;
+                    border: none;
+                    background: transparent;
                 }
                 .gc-dropdown-item:hover { background: rgba(255,255,255,0.08); }
+                .settings-close, .debug-close, .dash-close, .onboarding-close {
+                    background: transparent;
+                    border: none;
+                    color: inherit;
+                    display: inline-flex;
+                    align-items: center;
+                    justify-content: center;
+                    width: 28px;
+                    height: 28px;
+                    border-radius: 6px;
+                    padding: 0;
+                    line-height: 1;
+                }
+                button:focus-visible,
+                .details-tab:focus-visible,
+                .toggle-switch:focus-visible,
+                .settings-close:focus-visible,
+                .debug-close:focus-visible,
+                .dash-close:focus-visible,
+                .onboarding-close:focus-visible,
+                .gc-native-btn:focus-visible {
+                    outline: 2px solid var(--accent, #8ab4f8);
+                    outline-offset: 2px;
+                }
+                @media (max-width: 960px) {
+                    #${PANEL_ID} {
+                        width: min(90vw, 320px);
+                        max-width: 320px;
+                    }
+                    .gemini-main-view { padding: 10px 12px 12px; }
+                    .gemini-big-num { font-size: 34px; }
+                    .gemini-details-view.expanded { max-height: 52vh; }
+                    .metric-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+                    .dash-content { padding: 20px; gap: 22px; }
+                    .dash-header { padding: 18px 20px; }
+                    .heatmap-container { padding: 16px; }
+                }
+                @media (max-width: 640px) {
+                    .details-tab .tab-label { display: none; }
+                    .details-tab { min-height: 34px; }
+                    .settings-body { padding: 10px 12px; }
+                    .dash-title { font-size: 18px; }
+                    .metric-val { font-size: 26px; }
+                    .module-desc { font-size: 10px; opacity: 0.85; }
+                }
             `);
         },
 
@@ -4301,9 +4605,11 @@ function filterLogs(entries, opts) {
                 const userCapsule = document.createElement('div');
                 userCapsule.id = 'g-user-capsule';
                 userCapsule.className = 'user-capsule';
-                const toggle = document.createElement('span');
+                const toggle = document.createElement('button');
+                toggle.type = 'button';
                 toggle.className = 'gemini-toggle-btn';
                 toggle.textContent = '☰';
+                toggle.setAttribute('aria-label', 'Toggle details panel');
                 toggle.onmousedown = (e) => e.stopPropagation();
                 toggle.onclick = () => this.toggleDetails();
                 header.appendChild(userCapsule);
@@ -4385,12 +4691,18 @@ function filterLogs(entries, opts) {
             pane.replaceChildren();
 
             // Collect available tabs (stats is always present)
-            const tabs = [{ id: 'stats', icon: '📊' }];
+            const tabLabelMap = {
+                stats: NativeUI.t('统计', 'Stats'),
+                folders: NativeUI.t('文件夹', 'Folders'),
+                'prompt-vault': NativeUI.t('提示词', 'Vault'),
+                'batch-delete': NativeUI.t('批删', 'Batch')
+            };
+            const tabs = [{ id: 'stats', icon: '📊', label: tabLabelMap.stats }];
             const tabModules = ['folders', 'prompt-vault', 'batch-delete'];
             tabModules.forEach(id => {
                 const mod = ModuleRegistry.modules[id];
                 if (mod && ModuleRegistry.isEnabled(id) && typeof mod.renderToDetailsPane === 'function') {
-                    tabs.push({ id, icon: mod.icon });
+                    tabs.push({ id, icon: mod.icon, label: tabLabelMap[id] || mod.name });
                 }
             });
 
@@ -4401,11 +4713,22 @@ function filterLogs(entries, opts) {
             if (tabs.length > 1) {
                 const tabBar = document.createElement('div');
                 tabBar.className = 'details-tab-bar';
+                tabBar.setAttribute('role', 'tablist');
                 tabs.forEach(t => {
-                    const tab = document.createElement('div');
+                    const tab = document.createElement('button');
+                    tab.type = 'button';
                     tab.className = `details-tab ${t.id === this._activeTab ? 'active' : ''}`;
-                    tab.textContent = t.icon;
-                    tab.title = t.id;
+                    tab.title = t.label;
+                    tab.setAttribute('role', 'tab');
+                    tab.setAttribute('aria-selected', t.id === this._activeTab ? 'true' : 'false');
+                    const icon = document.createElement('span');
+                    icon.className = 'tab-icon';
+                    icon.textContent = t.icon;
+                    const label = document.createElement('span');
+                    label.className = 'tab-label';
+                    label.textContent = t.label;
+                    tab.appendChild(icon);
+                    tab.appendChild(label);
                     tab.onclick = (e) => {
                         e.stopPropagation();
                         this._activeTab = t.id;
@@ -4481,12 +4804,20 @@ function filterLogs(entries, opts) {
                 sortedUsers.forEach(uid => {
                     const row = document.createElement('div');
                     row.className = `detail-row user-row ${uid === user ? 'is-me' : ''} ${uid === inspecting ? 'active-mode' : ''}`;
+                    row.setAttribute('role', 'button');
+                    row.tabIndex = 0;
                     row.onclick = (e) => {
                         e.stopPropagation();
                         Core.setInspectingUser(uid);
                         cm.loadDataForUser(uid);
                         cm.state.viewMode = 'total';
                         this.renderDetailsPane();
+                    };
+                    row.onkeydown = (e) => {
+                        if (e.key === 'Enter' || e.key === ' ') {
+                            e.preventDefault();
+                            row.click();
+                        }
                     };
                     const nameSpan = document.createElement('span');
                     nameSpan.textContent = uid.split('@')[0];
@@ -4508,6 +4839,8 @@ function filterLogs(entries, opts) {
                 const row = document.createElement('div');
                 row.className = `detail-row ${currentTheme === key ? 'active-mode' : ''}`;
                 row.textContent = themes[key].name;
+                row.setAttribute('role', 'button');
+                row.tabIndex = 0;
                 row.onclick = (e) => {
                     e.stopPropagation();
                     Core.setTheme(key);
@@ -4515,6 +4848,12 @@ function filterLogs(entries, opts) {
                     const panel = document.getElementById(PANEL_ID);
                     Core.applyTheme(panel, key);
                     this.renderDetailsPane();
+                };
+                row.onkeydown = (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        row.click();
+                    }
                 };
                 pane.appendChild(row);
             });
@@ -4557,6 +4896,8 @@ function filterLogs(entries, opts) {
 
             const row = document.createElement('div');
             row.className = `detail-row ${cm.state.viewMode === mode && inspecting === user ? 'active-mode' : ''}`;
+            row.setAttribute('role', 'button');
+            row.tabIndex = 0;
             const labelSpan = document.createElement('span');
             labelSpan.textContent = label;
             const valSpan = document.createElement('span');
@@ -4574,6 +4915,12 @@ function filterLogs(entries, opts) {
                 cm.state.resetStep = 0;
                 this.update();
                 this.renderDetailsPane();
+            };
+            row.onkeydown = (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    row.click();
+                }
             };
             return row;
         },
@@ -4727,12 +5074,22 @@ function filterLogs(entries, opts) {
             const winH = window.innerHeight;
             const savedLeft = parseFloat(pos.left) || 0;
             const savedTop = parseFloat(pos.top) || 0;
+            const savedRight = parseFloat(pos.right);
+            const estimatedPanelWidth = Math.min(Math.max(winW * 0.22, 170), 240);
+
+            // Mobile-first fallback so panel doesn't start off-screen on narrow viewports.
+            if (winW <= 768) {
+                pos = { top: '12px', left: 'auto', bottom: 'auto', right: '12px' };
+            }
 
             if (pos.left !== 'auto' && pos.top !== 'auto' &&
                 (savedLeft > winW - 50 || savedTop > winH - 50)) {
                 console.warn(`💎 Panel off-screen detected. Resetting.`);
                 pos = DEFAULT_POS;
                 GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
+            }
+            if (pos.right !== 'auto' && !Number.isNaN(savedRight) && (savedRight + estimatedPanelWidth > winW - 8)) {
+                pos = { ...pos, left: 'auto', right: '12px' };
             }
             el.style.top = pos.top;
             el.style.left = pos.left;
@@ -4789,7 +5146,7 @@ function filterLogs(entries, opts) {
             const overlay = document.createElement('div');
             overlay.id = SETTINGS_MODAL_ID;
             overlay.className = 'settings-overlay';
-            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            const closeModal = () => UIA11y.closeModal(overlay);
 
             const modal = document.createElement('div');
             modal.className = 'settings-modal';
@@ -4799,11 +5156,14 @@ function filterLogs(entries, opts) {
             const header = document.createElement('div');
             header.className = 'settings-header';
             const title = document.createElement('h3');
+            title.id = 'gc-settings-title';
             title.textContent = '⚙️ Settings';
-            const closeBtn = document.createElement('span');
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
             closeBtn.className = 'settings-close';
             closeBtn.textContent = '✕';
-            closeBtn.onclick = () => overlay.remove();
+            closeBtn.setAttribute('aria-label', 'Close settings');
+            closeBtn.onclick = () => closeModal();
             header.appendChild(title);
             header.appendChild(closeBtn);
 
@@ -4839,10 +5199,12 @@ function filterLogs(entries, opts) {
 
                 // ⓘ info button for onboarding
                 if (typeof mod.getOnboarding === 'function') {
-                    const infoBtn = document.createElement('span');
+                    const infoBtn = document.createElement('button');
+                    infoBtn.type = 'button';
                     infoBtn.className = 'onboarding-info-btn';
                     infoBtn.textContent = '\u24D8';
                     infoBtn.title = 'Show guide';
+                    infoBtn.setAttribute('aria-label', `Show guide for ${mod.name}`);
                     infoBtn.onclick = (e) => {
                         e.stopPropagation();
                         PanelUI.showOnboarding(mod.id);
@@ -4850,11 +5212,16 @@ function filterLogs(entries, opts) {
                     rightSide.appendChild(infoBtn);
                 }
 
-                const toggle = document.createElement('div');
+                const toggle = document.createElement('button');
+                toggle.type = 'button';
                 toggle.className = `toggle-switch ${ModuleRegistry.isEnabled(mod.id) ? 'on' : ''}`;
+                toggle.setAttribute('aria-label', `${mod.name} module`);
+                toggle.setAttribute('aria-pressed', ModuleRegistry.isEnabled(mod.id) ? 'true' : 'false');
                 toggle.onclick = () => {
                     ModuleRegistry.toggle(mod.id);
                     toggle.classList.toggle('on');
+                    const on = toggle.classList.contains('on');
+                    toggle.setAttribute('aria-pressed', on ? 'true' : 'false');
                     // 刷新详情面板以显示/隐藏模块区域
                     if (CounterModule.state.isExpanded) {
                         PanelUI.renderDetailsPane();
@@ -5054,7 +5421,7 @@ function filterLogs(entries, opts) {
                     const url = URL.createObjectURL(blob);
                     const a = document.createElement('a');
                     a.href = url;
-                    a.download = `gemini-counter-${Core.getCurrentUser().split('@')[0]}-${new Date().toISOString().slice(0, 10)}.json`;
+                    a.download = `gemini-counter-${Core.getCurrentUser().split('@')[0]}-${Core.formatDayKey(new Date())}.json`;
                     a.click();
                     URL.revokeObjectURL(url);
                 };
@@ -5068,11 +5435,12 @@ function filterLogs(entries, opts) {
             dataSection.appendChild(calibrateBtn);
 
             const resetPosBtn = document.createElement('button');
+            resetPosBtn.type = 'button';
             resetPosBtn.className = 'settings-btn';
             resetPosBtn.textContent = '📍 Reset Panel Position';
             resetPosBtn.onclick = () => {
                 GM_setValue(GLOBAL_KEYS.POS, DEFAULT_POS);
-                overlay.remove();
+                closeModal();
                 location.reload();
             };
             dataSection.appendChild(resetPosBtn);
@@ -5091,12 +5459,16 @@ function filterLogs(entries, opts) {
             const debugLabel = document.createElement('span');
             debugLabel.className = 'settings-label';
             debugLabel.textContent = 'Enable Debug';
-            const debugToggle = document.createElement('div');
+            const debugToggle = document.createElement('button');
+            debugToggle.type = 'button';
             debugToggle.className = `toggle-switch ${isDebugEnabled() ? 'on' : ''}`;
+            debugToggle.setAttribute('aria-label', 'Enable debug mode');
+            debugToggle.setAttribute('aria-pressed', isDebugEnabled() ? 'true' : 'false');
             debugToggle.onclick = () => {
                 const enabled = !isDebugEnabled();
                 setDebugEnabled(enabled);
                 debugToggle.classList.toggle('on');
+                debugToggle.setAttribute('aria-pressed', enabled ? 'true' : 'false');
                 Logger.info('Debug mode toggled', { enabled });
             };
             debugToggleRow.appendChild(debugLabel);
@@ -5140,6 +5512,11 @@ function filterLogs(entries, opts) {
             modal.appendChild(body);
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
+            UIA11y.setupModal(overlay, modal, {
+                close: closeModal,
+                labelledBy: title.id,
+                initialFocus: resetSelect
+            });
         },
 
         // --- Onboarding Modal ---
@@ -5153,12 +5530,12 @@ function filterLogs(entries, opts) {
             let lang = GM_getValue(GLOBAL_KEYS.ONBOARDING_LANG, 'zh');
             const MODAL_ID = 'gemini-onboarding-modal';
             const existing = document.getElementById(MODAL_ID);
-            if (existing) existing.remove();
+            if (existing) UIA11y.closeModal(existing);
 
             const overlay = document.createElement('div');
             overlay.id = MODAL_ID;
             overlay.className = 'onboarding-overlay';
-            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            const closeModal = () => UIA11y.closeModal(overlay);
 
             const modal = document.createElement('div');
             modal.className = 'onboarding-modal';
@@ -5172,11 +5549,14 @@ function filterLogs(entries, opts) {
                 const header = document.createElement('div');
                 header.className = 'onboarding-header';
                 const title = document.createElement('h3');
+                title.id = 'gc-onboarding-title';
                 title.textContent = mod.icon + ' ' + mod.name;
-                const closeBtn = document.createElement('span');
+                const closeBtn = document.createElement('button');
+                closeBtn.type = 'button';
                 closeBtn.className = 'onboarding-close';
                 closeBtn.textContent = '\u2715';
-                closeBtn.onclick = () => overlay.remove();
+                closeBtn.setAttribute('aria-label', 'Close onboarding');
+                closeBtn.onclick = () => closeModal();
                 header.appendChild(title);
                 header.appendChild(closeBtn);
                 modal.appendChild(header);
@@ -5244,9 +5624,10 @@ function filterLogs(entries, opts) {
                     renderContent();
                 };
                 const startBtn = document.createElement('button');
+                startBtn.type = 'button';
                 startBtn.className = 'onboarding-start-btn';
                 startBtn.textContent = lang === 'zh' ? '\u5F00\u59CB\u4F7F\u7528 \u2192' : 'Get Started \u2192';
-                startBtn.onclick = () => overlay.remove();
+                startBtn.onclick = () => closeModal();
                 footer.appendChild(langBtn);
                 footer.appendChild(startBtn);
                 modal.appendChild(footer);
@@ -5255,6 +5636,10 @@ function filterLogs(entries, opts) {
             renderContent();
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
+            UIA11y.setupModal(overlay, modal, {
+                close: closeModal,
+                labelledBy: 'gc-onboarding-title'
+            });
         },
 
         // --- Debug Modal ---
@@ -5268,9 +5653,8 @@ function filterLogs(entries, opts) {
             let unsubscribe = null;
             const closeModal = () => {
                 if (unsubscribe) unsubscribe();
-                overlay.remove();
+                UIA11y.closeModal(overlay);
             };
-            overlay.onclick = (e) => { if (e.target === overlay) closeModal(); };
 
             const modal = document.createElement('div');
             modal.className = 'debug-modal';
@@ -5279,10 +5663,13 @@ function filterLogs(entries, opts) {
             const header = document.createElement('div');
             header.className = 'debug-header';
             const title = document.createElement('h3');
+            title.id = 'gc-debug-title';
             title.textContent = '🧰 Debug Panel';
-            const closeBtn = document.createElement('span');
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
             closeBtn.className = 'debug-close';
             closeBtn.textContent = '✕';
+            closeBtn.setAttribute('aria-label', 'Close debug panel');
             closeBtn.onclick = () => closeModal();
             header.appendChild(title);
             header.appendChild(closeBtn);
@@ -5407,6 +5794,10 @@ function filterLogs(entries, opts) {
             modal.appendChild(body);
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
+            UIA11y.setupModal(overlay, modal, {
+                close: closeModal,
+                labelledBy: title.id
+            });
         },
 
         // --- Calibration Modal ---
@@ -5420,7 +5811,7 @@ function filterLogs(entries, opts) {
             const overlay = document.createElement('div');
             overlay.id = MODAL_ID;
             overlay.className = 'settings-overlay';
-            overlay.onclick = (e) => { if (e.target === overlay) overlay.remove(); };
+            const closeModal = () => UIA11y.closeModal(overlay);
 
             const modal = document.createElement('div');
             modal.className = 'settings-modal';
@@ -5430,11 +5821,14 @@ function filterLogs(entries, opts) {
             const header = document.createElement('div');
             header.className = 'settings-header';
             const title = document.createElement('h3');
+            title.id = 'gc-calibrate-title';
             title.textContent = 'Calibrate Data';
-            const closeBtn = document.createElement('span');
+            const closeBtn = document.createElement('button');
+            closeBtn.type = 'button';
             closeBtn.className = 'settings-close';
             closeBtn.textContent = '\u2715';
-            closeBtn.onclick = () => overlay.remove();
+            closeBtn.setAttribute('aria-label', 'Close calibration');
+            closeBtn.onclick = () => closeModal();
             header.appendChild(title);
             header.appendChild(closeBtn);
 
@@ -5526,7 +5920,7 @@ function filterLogs(entries, opts) {
                     today: newToday, total: newTotal, chats: newChats,
                     chatId: currentCid || null
                 });
-                overlay.remove();
+                closeModal();
             };
             body.appendChild(applyBtn);
 
@@ -5539,6 +5933,11 @@ function filterLogs(entries, opts) {
             modal.appendChild(body);
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
+            UIA11y.setupModal(overlay, modal, {
+                close: closeModal,
+                labelledBy: title.id,
+                initialFocus: todayField.input
+            });
         },
 
         // --- Dashboard Modal ---
@@ -5550,12 +5949,10 @@ function filterLogs(entries, opts) {
             const overlay = document.createElement('div');
             overlay.id = 'gemini-dashboard-overlay';
             overlay.className = 'dash-overlay';
-            overlay.onclick = (e) => {
-                if (e.target === overlay) {
-                    const tip = document.getElementById('g-heatmap-tooltip');
-                    if (tip) tip.remove();
-                    overlay.remove();
-                }
+            const closeModal = () => {
+                const tip = document.getElementById('g-heatmap-tooltip');
+                if (tip) tip.remove();
+                UIA11y.closeModal(overlay);
             };
 
             const modal = document.createElement('div');
@@ -5568,6 +5965,7 @@ function filterLogs(entries, opts) {
 
             const titleDiv = document.createElement('div');
             titleDiv.className = 'dash-title';
+            titleDiv.id = 'gc-dashboard-title';
             titleDiv.textContent = '📊 Analytics ';
             const userSpan = document.createElement('span');
             userSpan.style.fontSize = '12px';
@@ -5576,14 +5974,12 @@ function filterLogs(entries, opts) {
             userSpan.textContent = Core.getCurrentUser().split('@')[0];
             titleDiv.appendChild(userSpan);
 
-            const close = document.createElement('div');
+            const close = document.createElement('button');
+            close.type = 'button';
             close.className = 'dash-close';
             close.textContent = '×';
-            close.onclick = () => {
-                const tip = document.getElementById('g-heatmap-tooltip');
-                if (tip) tip.remove();
-                overlay.remove();
-            };
+            close.setAttribute('aria-label', 'Close analytics');
+            close.onclick = () => closeModal();
 
             header.appendChild(titleDiv);
             header.appendChild(close);
@@ -5701,7 +6097,7 @@ function filterLogs(entries, opts) {
                 const col = document.createElement('div');
                 col.className = 'heatmap-col';
                 for (let day = 0; day < 7; day++) {
-                    const key = iterDate.toISOString().slice(0, 10);
+                    const key = Core.formatDayKey(iterDate);
                     const count = cm.state.dailyCounts[key]?.messages || 0;
 
                     const cell = document.createElement('div');
@@ -5822,6 +6218,10 @@ function filterLogs(entries, opts) {
             modal.appendChild(content);
             overlay.appendChild(modal);
             document.body.appendChild(overlay);
+            UIA11y.setupModal(overlay, modal, {
+                close: closeModal,
+                labelledBy: titleDiv.id
+            });
 
             setTimeout(() => { hmContainer.scrollLeft = hmContainer.scrollWidth; }, 0);
         }
@@ -5933,7 +6333,7 @@ function filterLogs(entries, opts) {
                 PanelUI.showOnboarding(id);
                 // Wait for user to dismiss before showing next (poll for overlay removal)
                 const check = setInterval(() => {
-                    if (!document.querySelector('.gc-onboarding-overlay')) {
+                    if (!document.querySelector('.onboarding-overlay')) {
                         clearInterval(check);
                         setTimeout(showNext, 500);
                     }
